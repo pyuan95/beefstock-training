@@ -300,19 +300,30 @@ def main():
             lr=args.lr,
         )
         if args.resume_from_model is not None:
-            nnue = nnue.load_from_checkpoint(
-                args.resume_from_model,
-                n_layers=args.n_layers,
-                n_heads=args.n_heads,
-                depth=args.depth,
-                start_lambda=start_lambda,
-                max_epoch=max_epoch,
-                end_lambda=end_lambda,
-                gamma=args.gamma,
-                dff=args.dff,
-                lr=args.lr,
-                strict=False,
-            )
+            base = "./training/runs/run_0/lightning_logs"
+            dirs = sorted(os.listdir(base), key=lambda x : os.path.getmtime(os.path.join(base, x)), reverse=True)
+            version = None
+            for d in dirs:
+                f =  os.path.join(base, d, "checkpoints/last.ckpt")
+                print(f, os.path.exists(f))
+                if os.path.exists(f):
+                    version = f
+                    break
+            if version is not None:
+                print("loading from", version)
+                nnue = nnue.load_from_checkpoint(
+                    version,
+                    n_layers=args.n_layers,
+                    n_heads=args.n_heads,
+                    depth=args.depth,
+                    start_lambda=start_lambda,
+                    max_epoch=max_epoch,
+                    end_lambda=end_lambda,
+                    gamma=args.gamma,
+                    dff=args.dff,
+                    lr=args.lr,
+                    strict=False,
+                )   
     else:
         if args.resume_from_model is None:
             nnue = M.NNUE(
@@ -371,7 +382,7 @@ def main():
         every_n_epochs=args.network_save_period,
         save_top_k=-1,
     )
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger)
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy="ddp")
 
     main_device = (
         trainer.strategy.root_device if trainer.strategy.root_device.index is None else "cuda:" + str(trainer.strategy.root_device.index)

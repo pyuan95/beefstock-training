@@ -266,8 +266,6 @@ class Transformer(pl.LightningModule):
     def step_(self, batch, batch_idx, loss_type):
         # convert the network and search scores to an estimate match result
         # based on the win_rate_model, with scalings and offsets optimized
-        # if batch_idx % 2000 == 0:
-        #     torch.save(self.state_dict(), "debug/model")
         in_scaling = 340
         out_scaling = 380
         offset = 270
