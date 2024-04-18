@@ -1,42 +1,38 @@
-#include <iostream>
-#include <memory>
-#include <string>
 #include <algorithm>
-#include <iterator>
-#include <future>
-#include <mutex>
-#include <thread>
 #include <deque>
+#include <future>
+#include <iostream>
+#include <iterator>
+#include <memory>
+#include <mutex>
 #include <random>
+#include <string>
+#include <thread>
 
 #include "lib/nnue_training_data_formats.h"
 #include "lib/nnue_training_data_stream.h"
 #include "lib/rng.h"
 
-#if defined (__x86_64__)
+#if defined(__x86_64__)
 #define EXPORT
 #define CDECL
 #else
-#if defined (_MSC_VER)
+#if defined(_MSC_VER)
 #define EXPORT __declspec(dllexport)
 #define CDECL __cdecl
 #else
 #define EXPORT
-#define CDECL __attribute__ ((__cdecl__))
+#define CDECL __attribute__((__cdecl__))
 #endif
 #endif
 
 using namespace binpack;
 using namespace chess;
 
-static Square orient(Color color, Square sq)
-{
-    if (color == Color::White)
-    {
+static Square orient(Color color, Square sq) {
+    if (color == Color::White) {
         return sq;
-    }
-    else
-    {
+    } else {
         // IMPORTANT: for now we use rotate180 instead of rank flip
         //            for compatibility with the stockfish master branch.
         //            Note that this is inconsistent with nodchip/master.
@@ -44,17 +40,98 @@ static Square orient(Color color, Square sq)
     }
 }
 
-static Square orient_flip(Color color, Square sq)
-{
-    if (color == Color::White)
-    {
+static Square orient_flip(Color color, Square sq) {
+    if (color == Color::White) {
         return sq;
-    }
-    else
-    {
+    } else {
         return sq.flippedVertically();
     }
 }
+
+struct Transformer {
+    static constexpr int NUM_SQ = 64;
+    static constexpr int NUM_PT = 13;
+    static constexpr int FEATURES_PER_SQUARE = NUM_SQ * NUM_PT * 3;                 // ksq * pt + attacking X + attacked by X
+    static constexpr int MAX_ACTIVE_FEATURES = NUM_SQ + NUM_SQ * 32 + NUM_SQ * 32;  // pieces + attacks + attacked by
+    static constexpr int INPUTS = FEATURES_PER_SQUARE * NUM_SQ;
+
+    static int get_index(chess::Piece piece, chess::Color color) {
+        return piece.type() == PieceType::None ? NUM_PT - 1 : static_cast<int>(piece.type()) * 2 + (piece.color() != color);
+    }
+
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
+        auto& pos = e.pos;
+        int j = 0;
+        // NUM_SQ features are piece features
+        auto ksq = pos.kingSquare(color);
+        for (Square sq : EnumTraits<Square>::values) {
+            auto attacks = pos.attacks(sq);
+            int piece_idx = get_index(pos.pieceAt(sq), color);
+            values[j] = 1.0f;
+            features[j++] = piece_idx + static_cast<int>(orient(color, ksq)) * NUM_PT * (sq != ksq)  // piece type and king square
+                            + static_cast<int>(orient(color, sq)) * FEATURES_PER_SQUARE;
+            for (Square attacked_sq : attacks) {
+                int attacked_piece_idx = get_index(pos.pieceAt(attacked_sq), color);
+                values[j] = 0.0f;
+                features[j++] = NUM_SQ * NUM_PT
+                                + attacked_piece_idx + static_cast<int>(orient(color, attacked_sq)) * NUM_PT  // attacked piece
+                                + static_cast<int>(orient(color, sq)) * FEATURES_PER_SQUARE;  // attacker piece
+                values[j] = 0.0f;
+                features[j++] = NUM_SQ * NUM_PT * 2
+                                + piece_idx + static_cast<int>(orient(color, sq)) * NUM_PT  // attacker piece
+                                + static_cast<int>(orient(color, attacked_sq)) * FEATURES_PER_SQUARE;  // attacked piece
+            }
+        }
+        return {j, INPUTS};
+    }
+};
+
+// struct Transformer {
+//     static constexpr int NUM_SQ = 64;
+//     static constexpr int NUM_PT = 13;
+//     static constexpr int NUM_PIECE_FEATURES = NUM_SQ * NUM_SQ * NUM_PT;       // ksq x psq x pt
+//     static constexpr int NUM_ATTN_FEATURES = NUM_PT * NUM_PT;                 // psq x psq
+//     static constexpr int MAX_ACTIVE_FEATURES = NUM_SQ * NUM_SQ + NUM_SQ + 1;  // attention mask + piece features + ksq
+//     static constexpr int INPUTS = NUM_PIECE_FEATURES;
+
+//     static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
+//         auto& pos = e.pos;
+//         int j = 0;
+//         // first NUM_SQ * NUM_SQ features are attention values for movement
+//         // indices [0, 11]: pieces
+//         // index 12: empty square
+//         for (Square from_sq : EnumTraits<Square>::values) {
+//             from_sq = orient(color, from_sq);
+//             auto attacks = pos.attacks(from_sq);
+//             auto from_piece = pos.pieceAt(from_sq);
+//             auto from_index = std::min(NUM_PT - 1, static_cast<int>(from_piece.type()) * 2 + (from_piece.color() != color));
+//             for (Square to_sq : EnumTraits<Square>::values) {
+//                 to_sq = orient(color, to_sq);
+//                 auto to_piece = pos.pieceAt(to_sq);
+//                 auto to_index = std::min(NUM_PT - 1, static_cast<int>(to_piece.type()) * 2 + (to_piece.color() != color));
+//                 int index = attacks.isSet(to_sq) ? from_index * NUM_PT + to_index : NUM_PT * NUM_PT - 1;
+//                 values[j] = 1.0f;
+//                 features[j++] = index;
+//             }
+//         }
+
+//         // next NUM_SQ features are piece features
+//         auto ksq = pos.kingSquare(color);
+//         for (Square sq : EnumTraits<Square>::values) {
+//             // iterate in reverse order if black
+//             sq = orient(color, sq);
+//             auto p = pos.pieceAt(sq);
+//             int p_idx = p.type() == PieceType::None ? NUM_PT - 1 : static_cast<int>(p.type()) * 2 + (p.color() != color);
+//             values[j] = p.type() == PieceType::None || p.type() == PieceType::King ? 0.0f : 1.0f;  // values for empty square or king are 0
+//             // this is correct, yes it's shit code i know
+//             features[j++] = p_idx + static_cast<int>(orient(color, sq)) * NUM_PT + static_cast<int>(orient(color, ksq)) * NUM_SQ * NUM_PT;
+//         }
+//         values[j] = 1.0f;
+//         features[j++] = static_cast<int>(orient(color, ksq));
+//         assert(j == MAX_ACTIVE_FEATURES);
+//         return {j, NUM_PIECE_FEATURES};
+//     }
+// };
 
 struct HalfKP {
     static constexpr int NUM_SQ = 64;
@@ -64,14 +141,12 @@ struct HalfKP {
 
     static constexpr int MAX_ACTIVE_FEATURES = 32;
 
-    static int feature_index(Color color, Square ksq, Square sq, Piece p)
-    {
+    static int feature_index(Color color, Square ksq, Square sq, Piece p) {
         auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
         return 1 + static_cast<int>(orient(color, sq)) + p_idx * NUM_SQ + static_cast<int>(ksq) * NUM_PLANES;
     }
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         auto& pos = e.pos;
         auto pieces = pos.piecesBB() & ~(pos.piecesBB(Piece(PieceType::King, Color::White)) | pos.piecesBB(Piece(PieceType::King, Color::Black)));
         auto ksq = pos.kingSquare(color);
@@ -79,15 +154,14 @@ struct HalfKP {
         // We order the features so that the resulting sparse
         // tensor is coalesced.
         int j = 0;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             values[j] = 1.0f;
             features[j] = feature_index(color, orient(color, ksq), sq, p);
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -101,8 +175,7 @@ struct HalfKPFactorized {
     static constexpr int MAX_PIECE_FEATURES = 32;
     static constexpr int MAX_ACTIVE_FEATURES = HalfKP::MAX_ACTIVE_FEATURES + MAX_K_FEATURES + MAX_PIECE_FEATURES;
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         auto [start_j, offset] = HalfKP::fill_features_sparse(e, features, values, color);
         int j = start_j;
         auto& pos = e.pos;
@@ -120,8 +193,7 @@ struct HalfKPFactorized {
         // tensor is coalesced. Note that we can just sort
         // the parts where values are all 1.0f and leave the
         // halfk feature where it was.
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
             values[j] = 1.0f;
@@ -129,7 +201,7 @@ struct HalfKPFactorized {
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -141,28 +213,25 @@ struct HalfKA {
 
     static constexpr int MAX_ACTIVE_FEATURES = 32;
 
-    static int feature_index(Color color, Square ksq, Square sq, Piece p)
-    {
+    static int feature_index(Color color, Square ksq, Square sq, Piece p) {
         auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
         return 1 + static_cast<int>(orient_flip(color, sq)) + p_idx * NUM_SQ + static_cast<int>(ksq) * NUM_PLANES;
     }
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
         auto ksq = pos.kingSquare(color);
 
         int j = 0;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             values[j] = 1.0f;
             features[j] = feature_index(color, orient_flip(color, ksq), sq, p);
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -174,15 +243,13 @@ struct HalfKAFactorized {
     static constexpr int MAX_PIECE_FEATURES = 32;
     static constexpr int MAX_ACTIVE_FEATURES = HalfKA::MAX_ACTIVE_FEATURES + MAX_PIECE_FEATURES;
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         const auto [start_j, offset] = HalfKA::fill_features_sparse(e, features, values, color);
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
 
         int j = start_j;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
             values[j] = 1.0f;
@@ -190,7 +257,7 @@ struct HalfKAFactorized {
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -202,30 +269,27 @@ struct HalfKAv2 {
 
     static constexpr int MAX_ACTIVE_FEATURES = 32;
 
-    static int feature_index(Color color, Square ksq, Square sq, Piece p)
-    {
+    static int feature_index(Color color, Square ksq, Square sq, Piece p) {
         auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
         if (p_idx == 11)
-            --p_idx; // pack the opposite king into the same NUM_SQ * NUM_SQ
+            --p_idx;  // pack the opposite king into the same NUM_SQ * NUM_SQ
         return static_cast<int>(orient_flip(color, sq)) + p_idx * NUM_SQ + static_cast<int>(ksq) * NUM_PLANES;
     }
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
         auto ksq = pos.kingSquare(color);
 
         int j = 0;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             values[j] = 1.0f;
             features[j] = feature_index(color, orient_flip(color, ksq), sq, p);
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -238,15 +302,13 @@ struct HalfKAv2Factorized {
     static constexpr int MAX_PIECE_FEATURES = 32;
     static constexpr int MAX_ACTIVE_FEATURES = HalfKAv2::MAX_ACTIVE_FEATURES + MAX_PIECE_FEATURES;
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         const auto [start_j, offset] = HalfKAv2::fill_features_sparse(e, features, values, color);
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
 
         int j = start_j;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
             values[j] = 1.0f;
@@ -254,13 +316,12 @@ struct HalfKAv2Factorized {
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
 // ksq must not be oriented
-static Square orient_flip_2(Color color, Square sq, Square ksq)
-{
+static Square orient_flip_2(Color color, Square sq, Square ksq) {
     bool h = ksq.file() < fileE;
     if (color == Color::Black)
         sq = sq.flippedVertically();
@@ -278,41 +339,37 @@ struct HalfKAv2_hm {
     static constexpr int MAX_ACTIVE_FEATURES = 32;
 
     static constexpr int KingBuckets[64] = {
-      -1, -1, -1, -1, 31, 30, 29, 28,
-      -1, -1, -1, -1, 27, 26, 25, 24,
-      -1, -1, -1, -1, 23, 22, 21, 20,
-      -1, -1, -1, -1, 19, 18, 17, 16,
-      -1, -1, -1, -1, 15, 14, 13, 12,
-      -1, -1, -1, -1, 11, 10, 9, 8,
-      -1, -1, -1, -1, 7, 6, 5, 4,
-      -1, -1, -1, -1, 3, 2, 1, 0
-    };
+        -1, -1, -1, -1, 31, 30, 29, 28,
+        -1, -1, -1, -1, 27, 26, 25, 24,
+        -1, -1, -1, -1, 23, 22, 21, 20,
+        -1, -1, -1, -1, 19, 18, 17, 16,
+        -1, -1, -1, -1, 15, 14, 13, 12,
+        -1, -1, -1, -1, 11, 10, 9, 8,
+        -1, -1, -1, -1, 7, 6, 5, 4,
+        -1, -1, -1, -1, 3, 2, 1, 0};
 
-    static int feature_index(Color color, Square ksq, Square sq, Piece p)
-    {
+    static int feature_index(Color color, Square ksq, Square sq, Piece p) {
         Square o_ksq = orient_flip_2(color, ksq, ksq);
         auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
         if (p_idx == 11)
-            --p_idx; // pack the opposite king into the same NUM_SQ * NUM_SQ
+            --p_idx;  // pack the opposite king into the same NUM_SQ * NUM_SQ
         return static_cast<int>(orient_flip_2(color, sq, ksq)) + p_idx * NUM_SQ + KingBuckets[static_cast<int>(o_ksq)] * NUM_PLANES;
     }
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
         auto ksq = pos.kingSquare(color);
 
         int j = 0;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             values[j] = 1.0f;
             features[j] = feature_index(color, ksq, sq, p);
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
@@ -325,16 +382,14 @@ struct HalfKAv2_hmFactorized {
     static constexpr int MAX_PIECE_FEATURES = 32;
     static constexpr int MAX_ACTIVE_FEATURES = HalfKAv2_hm::MAX_ACTIVE_FEATURES + MAX_PIECE_FEATURES;
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         const auto [start_j, offset] = HalfKAv2_hm::fill_features_sparse(e, features, values, color);
         auto& pos = e.pos;
         auto pieces = pos.piecesBB();
         auto ksq = pos.kingSquare(color);
 
         int j = start_j;
-        for(Square sq : pieces)
-        {
+        for (Square sq : pieces) {
             auto p = pos.pieceAt(sq);
             auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
             values[j] = 1.0f;
@@ -342,31 +397,27 @@ struct HalfKAv2_hmFactorized {
             ++j;
         }
 
-        return { j, INPUTS };
+        return {j, INPUTS};
     }
 };
 
 template <typename T, typename... Ts>
-struct FeatureSet
-{
+struct FeatureSet {
     static_assert(sizeof...(Ts) == 0, "Currently only one feature subset supported.");
 
     static constexpr int INPUTS = T::INPUTS;
     static constexpr int MAX_ACTIVE_FEATURES = T::MAX_ACTIVE_FEATURES;
 
-    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
-    {
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color) {
         return T::fill_features_sparse(e, features, values, color);
     }
 };
 
-struct SparseBatch
-{
+struct SparseBatch {
     static constexpr bool IS_BATCH = true;
 
     template <typename... Ts>
-    SparseBatch(FeatureSet<Ts...>, const std::vector<TrainingDataEntry>& entries)
-    {
+    SparseBatch(FeatureSet<Ts...>, const std::vector<TrainingDataEntry>& entries) {
         num_inputs = FeatureSet<Ts...>::INPUTS;
         size = entries.size();
         is_white = new float[size];
@@ -392,8 +443,7 @@ struct SparseBatch
         for (std::size_t i = 0; i < size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES; ++i)
             black_values[i] = 0.0f;
 
-        for(int i = 0; i < entries.size(); ++i)
-        {
+        for (int i = 0; i < entries.size(); ++i) {
             fill_entry(FeatureSet<Ts...>{}, i, entries[i]);
         }
     }
@@ -414,8 +464,7 @@ struct SparseBatch
     int* psqt_indices;
     int* layer_stack_indices;
 
-    ~SparseBatch()
-    {
+    ~SparseBatch() {
         delete[] is_white;
         delete[] outcome;
         delete[] score;
@@ -428,10 +477,8 @@ struct SparseBatch
     }
 
 private:
-
     template <typename... Ts>
-    void fill_entry(FeatureSet<Ts...>, int i, const TrainingDataEntry& e)
-    {
+    void fill_entry(FeatureSet<Ts...>, int i, const TrainingDataEntry& e) {
         is_white[i] = static_cast<float>(e.pos.sideToMove() == Color::White);
         outcome[i] = (e.result + 1.0f) / 2.0f;
         score[i] = e.score;
@@ -441,31 +488,26 @@ private:
     }
 
     template <typename... Ts>
-    void fill_features(FeatureSet<Ts...>, int i, const TrainingDataEntry& e)
-    {
+    void fill_features(FeatureSet<Ts...>, int i, const TrainingDataEntry& e) {
         const int offset = i * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES;
         num_active_white_features +=
             FeatureSet<Ts...>::fill_features_sparse(e, white + offset, white_values + offset, Color::White)
-            .first;
+                .first;
         num_active_black_features +=
             FeatureSet<Ts...>::fill_features_sparse(e, black + offset, black_values + offset, Color::Black)
-            .first;
+                .first;
     }
 };
 
-struct AnyStream
-{
+struct AnyStream {
     virtual ~AnyStream() = default;
 };
 
 template <typename StorageT>
-struct Stream : AnyStream
-{
+struct Stream : AnyStream {
     using StorageType = StorageT;
 
-    Stream(int concurrency, const std::vector<std::string>& filenames, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) :
-        m_stream(training_data::open_sfen_input_file_parallel(concurrency, filenames, cyclic, skipPredicate))
-    {
+    Stream(int concurrency, const std::vector<std::string>& filenames, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) : m_stream(training_data::open_sfen_input_file_parallel(concurrency, filenames, cyclic, skipPredicate)) {
     }
 
     virtual StorageT* next() = 0;
@@ -475,19 +517,14 @@ protected:
 };
 
 template <typename StorageT>
-struct AsyncStream : Stream<StorageT>
-{
+struct AsyncStream : Stream<StorageT> {
     using BaseType = Stream<StorageT>;
 
-    AsyncStream(int concurrency, const std::vector<std::string>& filenames, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) :
-        BaseType(1, filenames, cyclic, skipPredicate)
-    {
+    AsyncStream(int concurrency, const std::vector<std::string>& filenames, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) : BaseType(1, filenames, cyclic, skipPredicate) {
     }
 
-    ~AsyncStream()
-    {
-        if (m_next.valid())
-        {
+    ~AsyncStream() {
+        if (m_next.valid()) {
             delete m_next.get();
         }
     }
@@ -497,8 +534,7 @@ protected:
 };
 
 template <typename FeatureSetT, typename StorageT>
-struct FeaturedBatchStream : Stream<StorageT>
-{
+struct FeaturedBatchStream : Stream<StorageT> {
     static_assert(StorageT::IS_BATCH);
 
     using FeatureSet = FeatureSetT;
@@ -506,35 +542,28 @@ struct FeaturedBatchStream : Stream<StorageT>
 
     static constexpr int num_feature_threads_per_reading_thread = 2;
 
-    FeaturedBatchStream(int concurrency, const std::vector<std::string>& filenames, int batch_size, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) :
-        BaseType(
-            std::max(
-                1,
-                concurrency / num_feature_threads_per_reading_thread
-            ),
-            filenames,
-            cyclic,
-            skipPredicate
-        ),
-        m_concurrency(concurrency),
-        m_batch_size(batch_size)
-    {
+    FeaturedBatchStream(int concurrency, const std::vector<std::string>& filenames, int batch_size, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) : BaseType(
+                                                                                                                                                                                    std::max(
+                                                                                                                                                                                        1,
+                                                                                                                                                                                        concurrency / num_feature_threads_per_reading_thread),
+                                                                                                                                                                                    filenames,
+                                                                                                                                                                                    cyclic,
+                                                                                                                                                                                    skipPredicate),
+                                                                                                                                                                                m_concurrency(concurrency),
+                                                                                                                                                                                m_batch_size(batch_size) {
         m_stop_flag.store(false);
 
-        auto worker = [this]()
-        {
+        auto worker = [this]() {
             std::vector<TrainingDataEntry> entries;
             entries.reserve(m_batch_size);
 
-            while(!m_stop_flag.load())
-            {
+            while (!m_stop_flag.load()) {
                 entries.clear();
 
                 {
                     std::unique_lock lock(m_stream_mutex);
                     BaseType::m_stream->fill(entries, m_batch_size);
-                    if (entries.empty())
-                    {
+                    if (entries.empty()) {
                         break;
                     }
                 }
@@ -550,7 +579,6 @@ struct FeaturedBatchStream : Stream<StorageT>
                     lock.unlock();
                     m_batches_any.notify_one();
                 }
-
             }
             m_num_workers.fetch_sub(1);
             m_batches_any.notify_one();
@@ -558,11 +586,9 @@ struct FeaturedBatchStream : Stream<StorageT>
 
         const int num_feature_threads = std::max(
             1,
-            concurrency - std::max(1, concurrency / num_feature_threads_per_reading_thread)
-        );
+            concurrency - std::max(1, concurrency / num_feature_threads_per_reading_thread));
 
-        for (int i = 0; i < num_feature_threads; ++i)
-        {
+        for (int i = 0; i < num_feature_threads; ++i) {
             m_workers.emplace_back(worker);
 
             // This cannot be done in the thread worker. We need
@@ -573,13 +599,11 @@ struct FeaturedBatchStream : Stream<StorageT>
         }
     }
 
-    StorageT* next() override
-    {
+    StorageT* next() override {
         std::unique_lock lock(m_batch_mutex);
         m_batches_any.wait(lock, [this]() { return !m_batches.empty() || m_num_workers.load() == 0; });
 
-        if (!m_batches.empty())
-        {
+        if (!m_batches.empty()) {
             auto batch = m_batches.front();
             m_batches.pop_front();
 
@@ -591,21 +615,17 @@ struct FeaturedBatchStream : Stream<StorageT>
         return nullptr;
     }
 
-    ~FeaturedBatchStream()
-    {
+    ~FeaturedBatchStream() {
         m_stop_flag.store(true);
         m_batches_not_full.notify_all();
 
-        for (auto& worker : m_workers)
-        {
-            if (worker.joinable())
-            {
+        for (auto& worker : m_workers) {
+            if (worker.joinable()) {
                 worker.join();
             }
         }
 
-        for (auto& batch : m_batches)
-        {
+        for (auto& batch : m_batches) {
             delete batch;
         }
     }
@@ -625,24 +645,17 @@ private:
 };
 
 // Very simple fixed size string wrapper with a stable ABI to pass to python.
-struct Fen
-{
-    Fen() :
-        m_fen(nullptr)
-    {
+struct Fen {
+    Fen() : m_fen(nullptr) {
     }
 
-    Fen(const std::string& fen) :
-        m_size(fen.size()),
-        m_fen(new char[fen.size() + 1])
-    {
+    Fen(const std::string& fen) : m_size(fen.size()),
+                                  m_fen(new char[fen.size() + 1]) {
         std::memcpy(m_fen, fen.c_str(), fen.size() + 1);
     }
 
-    Fen& operator=(const std::string& fen)
-    {
-        if (m_fen != nullptr)
-        {
+    Fen& operator=(const std::string& fen) {
+        if (m_fen != nullptr) {
             delete m_fen;
         }
 
@@ -653,8 +666,7 @@ struct Fen
         return *this;
     }
 
-    ~Fen()
-    {
+    ~Fen() {
         delete[] m_fen;
     }
 
@@ -663,20 +675,15 @@ private:
     char* m_fen;
 };
 
-struct FenBatch
-{
-    FenBatch(const std::vector<TrainingDataEntry>& entries) :
-        m_size(entries.size()),
-        m_fens(new Fen[entries.size()])
-    {
-        for (int i = 0; i < m_size; ++i)
-        {
+struct FenBatch {
+    FenBatch(const std::vector<TrainingDataEntry>& entries) : m_size(entries.size()),
+                                                              m_fens(new Fen[entries.size()]) {
+        for (int i = 0; i < m_size; ++i) {
             m_fens[i] = entries[i].pos.fen();
         }
     }
 
-    ~FenBatch()
-    {
+    ~FenBatch() {
         delete[] m_fens;
     }
 
@@ -685,41 +692,33 @@ private:
     Fen* m_fens;
 };
 
-struct FenBatchStream : Stream<FenBatch>
-{
+struct FenBatchStream : Stream<FenBatch> {
     static constexpr int num_feature_threads_per_reading_thread = 2;
 
     using BaseType = Stream<FenBatch>;
 
-    FenBatchStream(int concurrency, const std::vector<std::string>& filenames, int batch_size, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) :
-        BaseType(
-            std::max(
-                1,
-                concurrency / num_feature_threads_per_reading_thread
-            ),
-            filenames,
-            cyclic,
-            skipPredicate
-        ),
-        m_concurrency(concurrency),
-        m_batch_size(batch_size)
-    {
+    FenBatchStream(int concurrency, const std::vector<std::string>& filenames, int batch_size, bool cyclic, std::function<bool(const TrainingDataEntry&)> skipPredicate) : BaseType(
+                                                                                                                                                                               std::max(
+                                                                                                                                                                                   1,
+                                                                                                                                                                                   concurrency / num_feature_threads_per_reading_thread),
+                                                                                                                                                                               filenames,
+                                                                                                                                                                               cyclic,
+                                                                                                                                                                               skipPredicate),
+                                                                                                                                                                           m_concurrency(concurrency),
+                                                                                                                                                                           m_batch_size(batch_size) {
         m_stop_flag.store(false);
 
-        auto worker = [this]()
-        {
+        auto worker = [this]() {
             std::vector<TrainingDataEntry> entries;
             entries.reserve(m_batch_size);
 
-            while(!m_stop_flag.load())
-            {
+            while (!m_stop_flag.load()) {
                 entries.clear();
 
                 {
                     std::unique_lock lock(m_stream_mutex);
                     BaseType::m_stream->fill(entries, m_batch_size);
-                    if (entries.empty())
-                    {
+                    if (entries.empty()) {
                         break;
                     }
                 }
@@ -735,7 +734,6 @@ struct FenBatchStream : Stream<FenBatch>
                     lock.unlock();
                     m_batches_any.notify_one();
                 }
-
             }
             m_num_workers.fetch_sub(1);
             m_batches_any.notify_one();
@@ -743,11 +741,9 @@ struct FenBatchStream : Stream<FenBatch>
 
         const int num_feature_threads = std::max(
             1,
-            concurrency - std::max(1, concurrency / num_feature_threads_per_reading_thread)
-        );
+            concurrency - std::max(1, concurrency / num_feature_threads_per_reading_thread));
 
-        for (int i = 0; i < num_feature_threads; ++i)
-        {
+        for (int i = 0; i < num_feature_threads; ++i) {
             m_workers.emplace_back(worker);
 
             // This cannot be done in the thread worker. We need
@@ -758,13 +754,11 @@ struct FenBatchStream : Stream<FenBatch>
         }
     }
 
-    FenBatch* next()
-    {
+    FenBatch* next() {
         std::unique_lock lock(m_batch_mutex);
         m_batches_any.wait(lock, [this]() { return !m_batches.empty() || m_num_workers.load() == 0; });
 
-        if (!m_batches.empty())
-        {
+        if (!m_batches.empty()) {
             auto batch = m_batches.front();
             m_batches.pop_front();
 
@@ -776,21 +770,17 @@ struct FenBatchStream : Stream<FenBatch>
         return nullptr;
     }
 
-    ~FenBatchStream()
-    {
+    ~FenBatchStream() {
         m_stop_flag.store(true);
         m_batches_not_full.notify_all();
 
-        for (auto& worker : m_workers)
-        {
-            if (worker.joinable())
-            {
+        for (auto& worker : m_workers) {
+            if (worker.joinable()) {
                 worker.join();
             }
         }
 
-        for (auto& batch : m_batches)
-        {
+        for (auto& batch : m_batches) {
             delete batch;
         }
     }
@@ -809,18 +799,13 @@ private:
     std::vector<std::thread> m_workers;
 };
 
-std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index)
-{
-    if (filtered || random_fen_skipping || wld_filtered || early_fen_skipping)
-    {
-        return [
-            random_fen_skipping,
-            prob = double(random_fen_skipping) / (random_fen_skipping + 1),
-            filtered,
-            wld_filtered,
-            early_fen_skipping
-            ](const TrainingDataEntry& e){
-
+std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index) {
+    if (filtered || random_fen_skipping || wld_filtered || early_fen_skipping) {
+        return [random_fen_skipping,
+                prob = double(random_fen_skipping) / (random_fen_skipping + 1),
+                filtered,
+                wld_filtered,
+                early_fen_skipping](const TrainingDataEntry& e) {
             // VALUE_NONE from Stockfish.
             // We need to allow a way to skip predetermined positions without
             // having to remove them from the dataset, as otherwise the we lose some
@@ -832,10 +817,9 @@ std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered,
                 1.121094, 1.234375, 1.339844, 1.437500, 1.527344, 1.609375, 1.683594, 1.750000,
                 1.808594, 1.859375, 1.902344, 1.937500, 1.964844, 1.984375, 1.996094, 2.000000,
                 1.996094, 1.984375, 1.964844, 1.937500, 1.902344, 1.859375, 1.808594, 1.750000,
-                1.683594, 1.609375, 1.527344, 1.437500, 1.339844, 1.234375, 1.121094, 1.000000
-            };
+                1.683594, 1.609375, 1.527344, 1.437500, 1.339844, 1.234375, 1.121094, 1.000000};
 
-            static constexpr double desired_piece_count_weights_total = [](){
+            static constexpr double desired_piece_count_weights_total = []() {
                 double tot = 0;
                 for (auto w : desired_piece_count_weights)
                     tot += w;
@@ -903,10 +887,8 @@ std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered,
             // update alpha, which scales the filtering probability, to a maximum rate.
             if (uint64_t(piece_count_history_all_total) % 10000 == 0) {
                 double pass = piece_count_history_all_total * desired_piece_count_weights_total;
-                for (int i = 0; i < 33; ++i)
-                {
-                    if (desired_piece_count_weights[pc] > 0)
-                    {
+                for (int i = 0; i < 33; ++i) {
+                    if (desired_piece_count_weights[pc] > 0) {
                         double tmp = piece_count_history_all_total * desired_piece_count_weights[pc] /
                                      (desired_piece_count_weights_total * piece_count_history_all[pc]);
                         if (tmp < pass)
@@ -916,8 +898,8 @@ std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered,
                 alpha = 1.0 / (pass * max_skipping_rate);
             }
 
-            double tmp = alpha *  piece_count_history_all_total * desired_piece_count_weights[pc] /
-                                 (desired_piece_count_weights_total * piece_count_history_all[pc]);
+            double tmp = alpha * piece_count_history_all_total * desired_piece_count_weights[pc] /
+                         (desired_piece_count_weights_total * piece_count_history_all[pc]);
             tmp = std::min(1.0, tmp);
             std::bernoulli_distribution distrib(1.0 - tmp);
             auto& prng = rng::get_thread_local_rng();
@@ -936,147 +918,109 @@ std::function<bool(const TrainingDataEntry&)> make_skip_predicate(bool filtered,
 
 extern "C" {
 
-    EXPORT SparseBatch* get_sparse_batch_from_fens(
-        const char* feature_set_c,
-        int num_fens,
-        const char* const* fens,
-        int* scores,
-        int* plies,
-        int* results
-    )
-    {
-        std::vector<TrainingDataEntry> entries;
-        entries.reserve(num_fens);
-        for (int i = 0; i < num_fens; ++i)
-        {
-            auto& e = entries.emplace_back();
-            e.pos = Position::fromFen(fens[i]);
-            movegen::forEachLegalMove(e.pos, [&](Move m){e.move = m;});
-            e.score = scores[i];
-            e.ply = plies[i];
-            e.result = results[i];
-        }
-
-        std::string_view feature_set(feature_set_c);
-        if (feature_set == "HalfKP")
-        {
-            return new SparseBatch(FeatureSet<HalfKP>{}, entries);
-        }
-        else if (feature_set == "HalfKP^")
-        {
-            return new SparseBatch(FeatureSet<HalfKPFactorized>{}, entries);
-        }
-        else if (feature_set == "HalfKA")
-        {
-            return new SparseBatch(FeatureSet<HalfKA>{}, entries);
-        }
-        else if (feature_set == "HalfKA^")
-        {
-            return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
-        }
-        else if (feature_set == "HalfKAv2")
-        {
-            return new SparseBatch(FeatureSet<HalfKAv2>{}, entries);
-        }
-        else if (feature_set == "HalfKAv2^")
-        {
-            return new SparseBatch(FeatureSet<HalfKAv2Factorized>{}, entries);
-        }
-        else if (feature_set == "HalfKAv2_hm")
-        {
-            return new SparseBatch(FeatureSet<HalfKAv2_hm>{}, entries);
-        }
-        else if (feature_set == "HalfKAv2_hm^")
-        {
-            return new SparseBatch(FeatureSet<HalfKAv2_hmFactorized>{}, entries);
-        }
-        fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
-        return nullptr;
+EXPORT SparseBatch* get_sparse_batch_from_fens(
+    const char* feature_set_c,
+    int num_fens,
+    const char* const* fens,
+    int* scores,
+    int* plies,
+    int* results) {
+    std::vector<TrainingDataEntry> entries;
+    entries.reserve(num_fens);
+    for (int i = 0; i < num_fens; ++i) {
+        auto& e = entries.emplace_back();
+        e.pos = Position::fromFen(fens[i]);
+        movegen::forEachLegalMove(e.pos, [&](Move m) { e.move = m; });
+        e.score = scores[i];
+        e.ply = plies[i];
+        e.result = results[i];
     }
 
-    // changing the signature needs matching changes in nnue_dataset.py
-    EXPORT FenBatchStream* CDECL create_fen_batch_stream(int concurrency, int num_files, const char* const* filenames, int batch_size, bool cyclic, bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index)
-    {
-        auto skipPredicate = make_skip_predicate(filtered, random_fen_skipping, wld_filtered, early_fen_skipping, param_index);
-        auto filenames_vec = std::vector<std::string>(filenames, filenames + num_files);
-
-        return new FenBatchStream(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    std::string_view feature_set(feature_set_c);
+    if (feature_set == "HalfKP") {
+        return new SparseBatch(FeatureSet<HalfKP>{}, entries);
+    } else if (feature_set == "HalfKP^") {
+        return new SparseBatch(FeatureSet<HalfKPFactorized>{}, entries);
+    } else if (feature_set == "HalfKA") {
+        return new SparseBatch(FeatureSet<HalfKA>{}, entries);
+    } else if (feature_set == "HalfKA^") {
+        return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
+    } else if (feature_set == "HalfKAv2") {
+        return new SparseBatch(FeatureSet<HalfKAv2>{}, entries);
+    } else if (feature_set == "HalfKAv2^") {
+        return new SparseBatch(FeatureSet<HalfKAv2Factorized>{}, entries);
+    } else if (feature_set == "HalfKAv2_hm") {
+        return new SparseBatch(FeatureSet<HalfKAv2_hm>{}, entries);
+    } else if (feature_set == "HalfKAv2_hm^") {
+        return new SparseBatch(FeatureSet<HalfKAv2_hmFactorized>{}, entries);
+    } else if (feature_set == "Transformer") {
+        return new SparseBatch(FeatureSet<Transformer>{}, entries);
     }
+    fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
+    return nullptr;
+}
 
-    EXPORT void CDECL destroy_fen_batch_stream(FenBatchStream* stream)
-    {
-        delete stream;
+// changing the signature needs matching changes in nnue_dataset.py
+EXPORT FenBatchStream* CDECL create_fen_batch_stream(int concurrency, int num_files, const char* const* filenames, int batch_size, bool cyclic, bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index) {
+    auto skipPredicate = make_skip_predicate(filtered, random_fen_skipping, wld_filtered, early_fen_skipping, param_index);
+    auto filenames_vec = std::vector<std::string>(filenames, filenames + num_files);
+
+    return new FenBatchStream(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+}
+
+EXPORT void CDECL destroy_fen_batch_stream(FenBatchStream* stream) {
+    delete stream;
+}
+
+// changing the signature needs matching changes in nnue_dataset.py
+EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, int num_files, const char* const* filenames, int batch_size, bool cyclic,
+                                                             bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index) {
+    auto skipPredicate = make_skip_predicate(filtered, random_fen_skipping, wld_filtered, early_fen_skipping, param_index);
+    auto filenames_vec = std::vector<std::string>(filenames, filenames + num_files);
+
+    std::string_view feature_set(feature_set_c);
+    if (feature_set == "HalfKP") {
+        return new FeaturedBatchStream<FeatureSet<HalfKP>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKP^") {
+        return new FeaturedBatchStream<FeatureSet<HalfKPFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKA") {
+        return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKA^") {
+        return new FeaturedBatchStream<FeatureSet<HalfKAFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKAv2") {
+        return new FeaturedBatchStream<FeatureSet<HalfKAv2>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKAv2^") {
+        return new FeaturedBatchStream<FeatureSet<HalfKAv2Factorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKAv2_hm") {
+        return new FeaturedBatchStream<FeatureSet<HalfKAv2_hm>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "HalfKAv2_hm^") {
+        return new FeaturedBatchStream<FeatureSet<HalfKAv2_hmFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+    } else if (feature_set == "Transformer") {
+        return new FeaturedBatchStream<FeatureSet<Transformer>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
     }
+    fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
+    return nullptr;
+}
 
-    // changing the signature needs matching changes in nnue_dataset.py
-    EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, int num_files, const char* const* filenames, int batch_size, bool cyclic,
-                                                                 bool filtered, int random_fen_skipping, bool wld_filtered, int early_fen_skipping, int param_index)
-    {
-        auto skipPredicate = make_skip_predicate(filtered, random_fen_skipping, wld_filtered, early_fen_skipping, param_index);
-        auto filenames_vec = std::vector<std::string>(filenames, filenames + num_files);
+EXPORT void CDECL destroy_sparse_batch_stream(Stream<SparseBatch>* stream) {
+    delete stream;
+}
 
-        std::string_view feature_set(feature_set_c);
-        if (feature_set == "HalfKP")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKP>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKP^")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKPFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKA")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKA^")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKAFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKAv2")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKAv2>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKAv2^")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKAv2Factorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKAv2_hm")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKAv2_hm>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        else if (feature_set == "HalfKAv2_hm^")
-        {
-            return new FeaturedBatchStream<FeatureSet<HalfKAv2_hmFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
-        }
-        fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
-        return nullptr;
-    }
+EXPORT SparseBatch* CDECL fetch_next_sparse_batch(Stream<SparseBatch>* stream) {
+    return stream->next();
+}
 
-    EXPORT void CDECL destroy_sparse_batch_stream(Stream<SparseBatch>* stream)
-    {
-        delete stream;
-    }
+EXPORT FenBatch* CDECL fetch_next_fen_batch(Stream<FenBatch>* stream) {
+    return stream->next();
+}
 
-    EXPORT SparseBatch* CDECL fetch_next_sparse_batch(Stream<SparseBatch>* stream)
-    {
-        return stream->next();
-    }
+EXPORT void CDECL destroy_sparse_batch(SparseBatch* e) {
+    delete e;
+}
 
-    EXPORT FenBatch* CDECL fetch_next_fen_batch(Stream<FenBatch>* stream)
-    {
-        return stream->next();
-    }
-
-    EXPORT void CDECL destroy_sparse_batch(SparseBatch* e)
-    {
-        delete e;
-    }
-
-    EXPORT void CDECL destroy_fen_batch(FenBatch* e)
-    {
-        delete e;
-    }
-
+EXPORT void CDECL destroy_fen_batch(FenBatch* e) {
+    delete e;
+}
 }
 
 /* benches */ /*

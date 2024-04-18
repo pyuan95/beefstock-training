@@ -2,3 +2,7 @@ __pycache__/
 env/
 build/
 logs/
+training/
+debug/
+CMakeFiles/
+CMakeCache.txt
