@@ -15,6 +15,6 @@ python3 train.py \
     --lambda 1.0 \
     --gamma 0.9 \
     --max_epochs 400 \
-    --default_root_dir ./training/runs/run_0
+    --default_root_dir ./training/runs/run_0 \
 
     #     --resume-from-model ./training/runs/run_0/lightning_logs/version_0/checkpoints/last.ckpt \
