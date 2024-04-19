@@ -312,6 +312,9 @@ class Transformer(pl.LightningModule):
         label_true = (outcome * 2).to(torch.int64)
         classification_loss = F.cross_entropy(label_pred, label_true)
 
+        # TODO
+        # implement policy loss
+
         regression_loss = torch.pow(torch.abs(pt - qf), 2.5).mean()
         loss = regression_loss + classification_loss
         self.log(loss_type, loss)
