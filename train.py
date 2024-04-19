@@ -251,11 +251,24 @@ def main():
         help="Depth of the dff for the transformer model",
     )
     parser.add_argument(
-        "--warmup_steps",
+        "--smolgen-hidden",
         type=int,
-        default=4000,
-        dest="warmup_steps",
-        help="Number of warmup steps for the transformer model",
+        default=64,
+        dest="smolgen_hidden",
+        help="smolgen hidden depth",
+    )
+    parser.add_argument(
+        "--eval-hidden-depth",
+        type=int,
+        default=128,
+        dest="eval_hidden_depth",
+        help="eval hidden depth",
+    )
+    parser.add_argument(
+        "--activation-function",
+        default="relu",
+        dest="activation_function",
+        help="activation function for ffns",
     )
     features.add_argparse_args(parser)
     args = parser.parse_args()
@@ -295,16 +308,19 @@ def main():
             start_lambda=start_lambda,
             max_epoch=max_epoch,
             end_lambda=end_lambda,
+            smolgen_hidden=args.smolgen_hidden,
+            eval_hidden=args.eval_hidden_depth,
+            activation_function=args.activation_function,
             gamma=args.gamma,
             dff=args.dff,
             lr=args.lr,
         )
         if args.resume_from_model is not None:
             base = "./training/runs/run_0/lightning_logs"
-            dirs = sorted(os.listdir(base), key=lambda x : os.path.getmtime(os.path.join(base, x)), reverse=True)
+            dirs = sorted(os.listdir(base), key=lambda x: os.path.getmtime(os.path.join(base, x)), reverse=True)
             version = None
             for d in dirs:
-                f =  os.path.join(base, d, "checkpoints/last.ckpt")
+                f = os.path.join(base, d, "checkpoints/last.ckpt")
                 print(f, os.path.exists(f))
                 if os.path.exists(f):
                     version = f
@@ -319,11 +335,13 @@ def main():
                     start_lambda=start_lambda,
                     max_epoch=max_epoch,
                     end_lambda=end_lambda,
+                    smolgen_hidden=args.smolgen_hidden,
+                    eval_hidden=args.eval_hidden_depth,
+                    activation_function=args.activation_function,
                     gamma=args.gamma,
                     dff=args.dff,
                     lr=args.lr,
-                    strict=False,
-                )   
+                )
     else:
         if args.resume_from_model is None:
             nnue = M.NNUE(
@@ -385,7 +403,9 @@ def main():
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy="ddp")
 
     main_device = (
-        trainer.strategy.root_device if trainer.strategy.root_device.index is None else "cuda:" + str(trainer.strategy.root_device.index)
+        trainer.strategy.root_device
+        if trainer.strategy.root_device.index is None
+        else "cuda:" + str(trainer.strategy.root_device.index)
     )
 
     nnue.to(device=main_device)

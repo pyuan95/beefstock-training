@@ -16,6 +16,9 @@ python3 train.py \
     --gamma 0.998 \
     --validation-size 8192 \
     --max_epochs 4000 \
+    --smolgen-hidden 64 \
+    --eval-hidden-depth 128 \
+    --activation-function relu \
     --epoch-size 8192000 \
     --default_root_dir ./training/runs/run_0 \
     --resume-from-model yes \

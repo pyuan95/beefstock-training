@@ -32,7 +32,9 @@ assert (static_movement_bonus == static_movement_bonus.transpose(2, 3)).all()
 
 
 def positional_encoding(seq_length: int, depth: int):
-    result = torch.arange(0, seq_length).reshape([-1, 1]) / (torch.pow(10000, (torch.arange(0, depth) // 2 * 2.0) / depth)).reshape([1, -1])
+    result = torch.arange(0, seq_length).reshape([-1, 1]) / (
+        torch.pow(10000, (torch.arange(0, depth) // 2 * 2.0) / depth)
+    ).reshape([1, -1])
     result[:, torch.arange(0, depth, 2)] = torch.sin(result[:, torch.arange(0, depth, 2)])
     result[:, torch.arange(1, depth, 2)] = torch.cos(result[:, torch.arange(1, depth, 2)])
     return result[None, :, :]
@@ -114,19 +116,11 @@ class Encoder(nn.Module):
             nn.ReLU(),
             nn.Linear(dff, depth, bias=True),
         )
-        # self.attacks_gate = nn.Parameter(torch.zeros([1, n_heads, NUM_SQ, NUM_SQ], dtype=torch.float32))
-        self.attacks_scale = nn.Parameter(torch.zeros([1, n_heads, 1, 1], dtype=torch.float32))
-        # self.attacked_gate = nn.Parameter(torch.zeros([1, n_heads, NUM_SQ, NUM_SQ], dtype=torch.float32))
-        self.attacked_scale = nn.Parameter(torch.zeros([1, n_heads, 1, 1], dtype=torch.float32))
-        # self.static_gate = nn.Parameter(torch.zeros([1, n_heads, NUM_SQ, NUM_SQ], dtype=torch.float32))
-        self.static_scale = nn.Parameter(torch.zeros([1, n_heads, 1, 1], dtype=torch.float32))
-        self.static_movement_bonus = nn.Parameter(static_movement_bonus, requires_grad=False)
-
         self.norm1 = RMSNorm(depth, eps=eps)
         self.norm2 = RMSNorm(depth, eps=eps)
         self.nsq = NUM_SQ  # for torch.jit.script
 
-    def forward(self, x, attacks, attn_mask=None):
+    def forward(self, x, attn_mask=None):
         # attacks: N, NUM_SQ, NUM_SQ
         N = x.shape[0]
         """
@@ -171,6 +165,7 @@ class Transformer(pl.LightningModule):
         end_lambda=0.0,
         lr=1e-3,
         eps=1e-6,
+        activation_function="relu",
     ):
         super(Transformer, self).__init__()
         self.lr = lr
@@ -181,23 +176,36 @@ class Transformer(pl.LightningModule):
         self.depth = depth
         self.n_heads = n_heads
         self.nnue2score = 300.0
+        act = {
+            "relu": nn.ReLU(),
+            "silu": nn.SiLU(),
+        }[activation_function]
 
         self.smolgen = nn.Sequential(
-            nn.Linear(depth * NUM_SQ, smolgen_hidden),
-            nn.ReLU(),
-            nn.Linear(smolgen_hidden, smolgen_hidden),
-            nn.ReLU(),
+            nn.Linear(depth * NUM_SQ, smolgen_hidden * 2),
+            act,
+            nn.Linear(smolgen_hidden * 2, smolgen_hidden),
+            act,
             nn.Linear(smolgen_hidden, n_heads * NUM_SQ * NUM_SQ),
         )
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, depth, NUM_SQ)
         self.piece_norm = RMSNorm(self.depth)
-        self.material_weights = DoubleFeatureTransformerSlice(NUM_FEATURES, NUM_PSQT_BUCKETS)
         self.encoders = nn.ModuleList([Encoder(depth, n_heads, dff) for _ in range(n_layers)])
-        self.evals = nn.Sequential(
+        self.transformer_hidden = nn.Sequential(
             nn.Linear(depth * NUM_SQ * 2, eval_hidden),
-            nn.ReLU(),
+            act,
             nn.Linear(eval_hidden, eval_hidden),
-            nn.ReLU(),
+            act,
+        )
+        self.ffn_hidden = nn.Sequential(
+            nn.Linear(depth * NUM_SQ * 2, eval_hidden),
+            act,
+            nn.Linear(eval_hidden, eval_hidden),
+            act,
+        )
+        self.eval = nn.Sequential(
+            nn.Linear(eval_hidden * 2, eval_hidden),
+            act,
             nn.Linear(eval_hidden, 1),
         )
         self.init_weights()
@@ -220,7 +228,9 @@ class Transformer(pl.LightningModule):
                 input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
 
             # init piece encoder weights the same way
-            input_weights = self.piece_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, self.depth)  # ksq, psq/at/atr, sq, pt, depth
+            input_weights = self.piece_encoder.weight.view(
+                NUM_SQ, 3, NUM_SQ, NUM_PT, self.depth
+            )  # ksq, psq/at/atr, sq, pt, depth
             for i in range(3):
                 input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
 
@@ -236,32 +246,29 @@ class Transformer(pl.LightningModule):
     ):
         (N, _) = us.shape
 
-        # material count
-        wm, bm = self.material_weights(white_indices, white_values, black_indices, black_values)
-        wm = wm.gather(1, psqt_indices.unsqueeze(1))
-        bm = bm.gather(1, psqt_indices.unsqueeze(1))
-        material_contribution = (wm - bm) * (us - 0.5) * self.nnue2score
-
-        # white POV score
+        # create piece embeddings and ffn embedding
         ones = torch.ones(white_indices.shape, device=self.device)
         white_emb = self.piece_norm(self.piece_encoder(white_indices, ones).reshape(N, NUM_SQ, self.depth))
-        white_movement = movement_attention(white_indices)
+        black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.depth))
+        ffn_emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
+        ffn_emb = self.ffn_hidden(ffn_emb.reshape(N, -1))
+
+        # white POV score
         white_smolgen = self.smolgen(white_emb.reshape(N, -1)).reshape(N * self.n_heads, NUM_SQ, NUM_SQ)
         for encoder in self.encoders:
-            white_emb = encoder(white_emb, white_movement, white_smolgen)
+            white_emb = encoder(white_emb, white_smolgen)
         white_emb = white_emb.reshape(N, -1)
 
         # black POV score
-        black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.depth))
-        black_movement = movement_attention(black_indices)
         black_smolgen = self.smolgen(black_emb.reshape(N, -1)).reshape(N * self.n_heads, NUM_SQ, NUM_SQ)
         for encoder in self.encoders:
-            black_emb = encoder(black_emb, black_movement, black_smolgen)
+            black_emb = encoder(black_emb, black_smolgen)
         black_emb = black_emb.reshape(N, -1)
 
-        emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
-        eval_contribution = self.evals(emb) * self.nnue2score
-        return material_contribution + eval_contribution, eval_contribution, material_contribution
+        transformer_emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
+        transformer_emb = self.transformer_hidden(transformer_emb)
+
+        return self.eval(torch.cat([ffn_emb, transformer_emb], dim=1))
 
     def step_(self, batch, batch_idx, loss_type):
         # convert the network and search scores to an estimate match result
