@@ -198,9 +198,9 @@ class Transformer(pl.LightningModule):
             act,
         )
         self.ffn_hidden = nn.Sequential(
-            nn.Linear(depth * NUM_SQ * 2, eval_hidden),
+            nn.Linear(depth * NUM_SQ * 2, eval_hidden * 4),
             act,
-            nn.Linear(eval_hidden, eval_hidden),
+            nn.Linear(eval_hidden * 4, eval_hidden),
             act,
         )
         self.eval = nn.Sequential(
