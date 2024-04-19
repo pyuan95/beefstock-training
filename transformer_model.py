@@ -208,24 +208,29 @@ class Transformer(pl.LightningModule):
             act,
             nn.Linear(eval_hidden, 1),
         )
+        self.classification = nn.Sequential(
+            nn.Linear(eval_hidden * 2, eval_hidden),
+            act,
+            nn.Linear(eval_hidden, 3),
+        )
         self.init_weights()
 
     def init_weights(self):
-        input_weights = self.material_weights.weight
-        input_bias = self.material_weights.bias
-
-        vals = [126, 781, 825, 1276, 2538]
-        sc = 1 / self.nnue2score
         with torch.no_grad():
             # init psqt
-            input_weights[:] = 0.0
-            input_bias[:] = 0.0
-            input_weights = input_weights.view(NUM_SQ, 3, NUM_SQ * NUM_PT, NUM_PSQT_BUCKETS)
-            for i in range(5):
-                input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
-                input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
-                input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
-                input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
+            # input_weights = self.material_weights.weight
+            # input_bias = self.material_weights.bias
+
+            # vals = [126, 781, 825, 1276, 2538]
+            # sc = 1 / self.nnue2score
+            # input_weights[:] = 0.0
+            # input_bias[:] = 0.0
+            # input_weights = input_weights.view(NUM_SQ, 3, NUM_SQ * NUM_PT, NUM_PSQT_BUCKETS)
+            # for i in range(5):
+            #     input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
+            #     input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
+            #     input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
+            #     input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
 
             # init piece encoder weights the same way
             input_weights = self.piece_encoder.weight.view(
@@ -268,7 +273,9 @@ class Transformer(pl.LightningModule):
         transformer_emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
         transformer_emb = self.transformer_hidden(transformer_emb)
 
-        return self.eval(torch.cat([ffn_emb, transformer_emb], dim=1))
+        emb = torch.cat([ffn_emb, transformer_emb], dim=1)
+
+        return self.eval(emb) * self.nnue2score, self.classification(emb.detach())
 
     def step_(self, batch, batch_idx, loss_type):
         # convert the network and search scores to an estimate match result
@@ -288,7 +295,7 @@ class Transformer(pl.LightningModule):
             psqt_indices,
             layer_stack_indices,
         ) = batch
-        scorenet, ec, mc = self(us, them, white_indices, white_values, black_indices, black_values, psqt_indices)
+        scorenet, label_pred = self(us, them, white_indices, white_values, black_indices, black_values, psqt_indices)
         q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
         qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
         qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
@@ -301,11 +308,16 @@ class Transformer(pl.LightningModule):
         actual_lambda = self.start_lambda + (self.end_lambda - self.start_lambda) * (self.current_epoch / self.max_epoch)
         pt = pf * actual_lambda + t * (1.0 - actual_lambda)
 
-        loss = torch.pow(torch.abs(pt - qf), 2.5).mean()
+        # classification loss
+        label_true = (outcome * 2).to(torch.int64)
+        classification_loss = F.cross_entropy(label_pred, label_true)
+
+        regression_loss = torch.pow(torch.abs(pt - qf), 2.5).mean()
+        loss = regression_loss + classification_loss
         self.log(loss_type, loss)
+        self.log("regression loss", regression_loss)
+        self.log("accuracy", (label_pred == label_true).float().mean())
         self.log("MAE", torch.abs(pt - qf).mean())
-        self.log("material contribution", mc.abs().mean())
-        self.log("eval contribution", ec.abs().mean())
         return loss
 
     def training_step(self, batch, batch_idx):
