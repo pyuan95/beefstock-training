@@ -37,9 +37,7 @@ def accuracy(predictions, labels):
 
 
 def positional_encoding(seq_length: int, depth: int):
-    result = torch.arange(0, seq_length).reshape([-1, 1]) / (
-        torch.pow(10000, (torch.arange(0, depth) // 2 * 2.0) / depth)
-    ).reshape([1, -1])
+    result = torch.arange(0, seq_length).reshape([-1, 1]) / (torch.pow(10000, (torch.arange(0, depth) // 2 * 2.0) / depth)).reshape([1, -1])
     result[:, torch.arange(0, depth, 2)] = torch.sin(result[:, torch.arange(0, depth, 2)])
     result[:, torch.arange(1, depth, 2)] = torch.cos(result[:, torch.arange(1, depth, 2)])
     return result[None, :, :]
@@ -157,14 +155,13 @@ class Smolgen(nn.Module):
             nn.Linear(num_heads * hidden_dim, num_heads * hidden_dim),
             activation,
         )
-        self.weights = nn.Parameter(init_weight(1, num_heads, NUM_SQ * NUM_SQ, hidden_dim))
-        self.bias = nn.Parameter(init_weight(1, num_heads, NUM_SQ * NUM_SQ, 1))
+        self.out = nn.Conv1d(1, NUM_SQ * NUM_SQ, hidden_dim, stride=hidden_dim)
 
     def forward(self, emb):
         N = emb.shape[0]
-        emb = self.hidden(emb).reshape(N, self.num_heads, self.hidden_dim, 1)
-        emb = (self.weights @ emb) + self.bias
-        return emb.reshape(N * self.num_heads, NUM_SQ, NUM_SQ)
+        emb = self.hidden(emb).reshape(N, 1, -1)
+        emb = self.out(emb)  # (N, NUM_SQ * NUM_SQ, n_heads)
+        return emb.transpose(1, 2).reshape(N * self.num_heads, NUM_SQ, NUM_SQ)
 
 
 class Transformer(pl.LightningModule):
@@ -191,7 +188,6 @@ class Transformer(pl.LightningModule):
         max_epoch=400,
         end_lambda=0.0,
         lr=1e-3,
-        eps=1e-6,
         policy_classification_weight=0.01,
         activation_function="relu",
     ):
@@ -226,7 +222,7 @@ class Transformer(pl.LightningModule):
             nn.Linear(eval_hidden * 4, eval_hidden),
             activation,
         )
-        self.eval = nn.Sequential(
+        self.final_eval = nn.Sequential(
             nn.Linear(eval_hidden * 2, eval_hidden),
             activation,
             nn.Linear(eval_hidden, 1),
@@ -257,9 +253,7 @@ class Transformer(pl.LightningModule):
             #     input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
 
             # init piece encoder weights the same way
-            input_weights = self.piece_encoder.weight.view(
-                NUM_SQ, 3, NUM_SQ, NUM_PT, self.depth
-            )  # ksq, psq/at/atr, sq, pt, depth
+            input_weights = self.piece_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, self.depth)  # ksq, psq/at/atr, sq, pt, depth
             for i in range(3):
                 input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
 
@@ -274,11 +268,14 @@ class Transformer(pl.LightningModule):
         psqt_indices,
     ):
         N = us.shape[0]
+
         # create piece embeddings and ffn embedding
         ones = torch.ones(white_indices.shape, device=self.device)
         white_emb = self.piece_norm(self.piece_encoder(white_indices, ones).reshape(N, NUM_SQ, self.depth))
         black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.depth))
-        ffn_emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
+        ffn_emb = torch.cat([white_emb, black_emb], dim=1) * us.reshape(N, 1, 1) + torch.cat([black_emb, white_emb], dim=1) * them.reshape(
+            N, 1, 1
+        )
         ffn_emb = self.ffn_hidden(ffn_emb.reshape(N, -1))
 
         # white POV score
@@ -301,7 +298,7 @@ class Transformer(pl.LightningModule):
         emb = torch.cat([ffn_emb, transformer_emb], dim=1)
 
         return (
-            self.eval(emb) * self.nnue2score,
+            self.final_eval(emb) * self.nnue2score,
             self.outcome_classification(emb.detach()),
             self.policy_classification(side_to_play_emb).reshape(N, -1),
         )
@@ -325,9 +322,7 @@ class Transformer(pl.LightningModule):
             psqt_indices,
             layer_stack_indices,
         ) = batch
-        scorenet, outcome_pred, policy_pred = self(
-            us, them, white_indices, white_values, black_indices, black_values, psqt_indices
-        )
+        scorenet, outcome_pred, policy_pred = self(us, them, white_indices, white_values, black_indices, black_values, psqt_indices)
         q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
         qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
         qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
@@ -344,11 +339,11 @@ class Transformer(pl.LightningModule):
         regression_loss = torch.pow(torch.abs(pt - qf), 2.5).mean()
 
         # outcome classification loss
-        outcome_true = (outcome * 2).to(torch.int64)
+        outcome_true = (outcome * 2).to(torch.int64).reshape(-1)
         outcome_classification_loss = F.cross_entropy(outcome_pred, outcome_true)
 
         # policy classifivation loss
-        policy_classification_loss = F.cross_entropy(policy_pred, policy_index)
+        policy_classification_loss = F.cross_entropy(policy_pred, policy_index.reshape(-1))
 
         loss = regression_loss + outcome_classification_loss + policy_classification_loss * self.policy_classification_weight
         self.log(loss_type, loss)

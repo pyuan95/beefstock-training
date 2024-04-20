@@ -6,9 +6,7 @@ import sys
 import glob
 from torch.utils.data import Dataset
 
-local_dllpath = [
-    n for n in glob.glob("./*training_data_loader.*") if n.endswith(".so") or n.endswith(".dll") or n.endswith(".dylib")
-]
+local_dllpath = [n for n in glob.glob("./*training_data_loader.*") if n.endswith(".so") or n.endswith(".dll") or n.endswith(".dylib")]
 if not local_dllpath:
     print("Cannot find data_loader shared library.")
     sys.exit(1)
@@ -23,6 +21,7 @@ class SparseBatch(ctypes.Structure):
         ("is_white", ctypes.POINTER(ctypes.c_float)),
         ("outcome", ctypes.POINTER(ctypes.c_float)),
         ("score", ctypes.POINTER(ctypes.c_float)),
+        ("policy_index", ctypes.POINTER(ctypes.c_int)),
         ("num_active_white_features", ctypes.c_int),
         ("num_active_black_features", ctypes.c_int),
         ("max_active_features", ctypes.c_int),
@@ -55,24 +54,14 @@ class SparseBatch(ctypes.Structure):
             .pin_memory()
             .to(device=device, non_blocking=True)
         )
-        us = (
-            torch.from_numpy(np.ctypeslib.as_array(self.is_white, shape=(self.size, 1)))
-            .pin_memory()
-            .to(device=device, non_blocking=True)
-        )
+        us = torch.from_numpy(np.ctypeslib.as_array(self.is_white, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
         them = 1.0 - us
         outcome = (
-            torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1)))
-            .pin_memory()
-            .to(device=device, non_blocking=True)
+            torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
         )
-        score = (
-            torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1)))
-            .pin_memory()
-            .to(device=device, non_blocking=True)
-        )
+        score = torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
         policy_index = (
-            torch.from_numpy(np.ctypeslib.as_array(self.policy_index, shape=(self.size, 1)))
+            torch.from_numpy(np.ctypeslib.as_array(self.policy_index, shape=(self.size,)))
             .long()
             .pin_memory()
             .to(device=device, non_blocking=True)
@@ -499,7 +488,7 @@ class SparseBatchDataset(torch.utils.data.IterableDataset):
             early_fen_skipping=self.early_fen_skipping,
             param_index=self.param_index,
             device=self.device,
-            return_policy_index=self.return_policy_index
+            return_policy_index=self.return_policy_index,
         )
 
 

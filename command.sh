@@ -23,4 +23,3 @@ python3 train.py \
     --return-policy-index True \
     --epoch-size 8192000 \
     --default_root_dir ./training/runs/run_0 \
-    --resume-from-model yes \

@@ -356,6 +356,7 @@ def main():
                     smolgen_hidden=args.smolgen_hidden,
                     eval_hidden=args.eval_hidden_depth,
                     activation_function=args.activation_function,
+                    policy_classification_weight=args.policy_classification_weight,
                     gamma=args.gamma,
                     dff=args.dff,
                     lr=args.lr,
@@ -421,9 +422,7 @@ def main():
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy="ddp")
 
     main_device = (
-        trainer.strategy.root_device
-        if trainer.strategy.root_device.index is None
-        else "cuda:" + str(trainer.strategy.root_device.index)
+        trainer.strategy.root_device if trainer.strategy.root_device.index is None else "cuda:" + str(trainer.strategy.root_device.index)
     )
 
     nnue.to(device=main_device)

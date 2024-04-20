@@ -492,12 +492,12 @@ struct SparseBatch
         is_white = new float[size];
         outcome = new float[size];
         score = new float[size];
+        psqt_indices = new int[size];
         policy_index = new int[size];
         white = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         white_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
-        psqt_indices = new int[size];
         layer_stack_indices = new int[size];
 
         num_active_white_features = 0;
@@ -1203,19 +1203,24 @@ extern "C"
     }
 }
 
-/* benches */ /*
-#include <chrono>
+/* benches */ 
 
-int main()
-{
-    auto stream = create_sparse_batch_stream("HalfKP", 4, { "10m_d3_q_2.binpack" }, 8192, true, false, 0, false, -1, 0);
-    auto t0 = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 1000; ++i)
-    {
-        if (i % 100 == 0) std::cout << i << '\n';
-        destroy_sparse_batch(stream->next());
-    }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    std::cout << (t1 - t0).count() / 1e9 << "s\n";
-}
-//*/
+ #include <chrono>
+
+// int main()
+// {
+//     const char* filenames = "/media/patrick/New Volume/chess_project/test80-2023-10-oct-2tb7p.binpack";
+//     auto stream = create_sparse_batch_stream("HalfKP", 1, 1, &filenames, 8192, true, false, 0, false, -1, 0);
+//     auto t0 = std::chrono::high_resolution_clock::now();
+//     for (int i = 0; i < 1000; ++i)
+//     {
+//         auto batch = stream->next();
+//         destroy_sparse_batch(batch);
+//         if (i % 100 == 0) {
+//             std::cout << batch->policy_index[0] << "\t";
+//             std::cout << batch->policy_index[100] << "\n";
+//         }
+//     }
+//     auto t1 = std::chrono::high_resolution_clock::now();
+//     std::cout << (t1 - t0).count() / 1e9 << "s\n";
+// }
