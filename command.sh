@@ -19,6 +19,7 @@ python3 train.py \
     --smolgen-hidden 64 \
     --eval-hidden-depth 128 \
     --activation-function relu \
+    --return-policy-index True \
     --epoch-size 8192000 \
     --default_root_dir ./training/runs/run_0 \
     --resume-from-model yes \

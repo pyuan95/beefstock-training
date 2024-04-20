@@ -26,6 +26,7 @@ def make_data_loaders(
     main_device,
     epoch_size,
     val_size,
+    return_policy_index,
 ):
     # Epoch and validation sizes are arbitrary
     features_name = feature_set.name
@@ -40,6 +41,7 @@ def make_data_loaders(
         early_fen_skipping=early_fen_skipping,
         param_index=param_index,
         device=main_device,
+        return_policy_index=return_policy_index,
     )
     val_infinite = nnue_dataset.SparseBatchDataset(
         features_name,
@@ -51,6 +53,7 @@ def make_data_loaders(
         early_fen_skipping=early_fen_skipping,
         param_index=param_index,
         device=main_device,
+        return_policy_index=return_policy_index,
     )
     # num_workers has to be 0 for sparse, and 1 for dense
     # it currently cannot work in parallel mode but it shouldn't need to
@@ -270,6 +273,13 @@ def main():
         dest="activation_function",
         help="activation function for ffns",
     )
+    parser.add_argument(
+        "--return-policy-index",
+        type=str2bool,
+        default=False,
+        dest="return_policy_index",
+        help="policy index will be included in each batch if set to true",
+    )
     features.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -425,6 +435,7 @@ def main():
         main_device,
         args.epoch_size,
         args.validation_size,
+        args.return_policy_index,
     )
 
     trainer.fit(nnue, train, val)

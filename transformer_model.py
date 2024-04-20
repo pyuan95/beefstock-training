@@ -140,6 +140,28 @@ class Encoder(nn.Module):
         return x2
 
 
+class Smolgen(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_heads, activation):
+        super().__init__()
+        self.activation = activation
+        self.num_heads = num_heads
+        self.hidden_dim = hidden_dim
+        self.hidden = nn.Sequential(
+            nn.Linear(input_dim, num_heads * hidden_dim),
+            activation,
+            nn.Linear(num_heads * hidden_dim, num_heads * hidden_dim),
+            activation,
+        )
+        self.weights = nn.Parameter(init_weight(1, num_heads, NUM_SQ * NUM_SQ, hidden_dim))
+        self.bias = nn.Parameter(init_weight(1, num_heads, NUM_SQ * NUM_SQ, 1))
+
+    def forward(self, emb):
+        N = emb.shape[0]
+        emb = self.hidden(emb).reshape(N, self.num_heads, self.hidden_dim, 1)
+        emb = (self.weights @ emb) + self.bias
+        return emb.reshape(N * self.num_heads, NUM_SQ, NUM_SQ)
+
+
 class Transformer(pl.LightningModule):
     """
     lambda_ = 0.0 - purely based on game results
@@ -176,41 +198,35 @@ class Transformer(pl.LightningModule):
         self.depth = depth
         self.n_heads = n_heads
         self.nnue2score = 300.0
-        act = {
+        activation = {
             "relu": nn.ReLU(),
             "silu": nn.SiLU(),
         }[activation_function]
 
-        self.smolgen = nn.Sequential(
-            nn.Linear(depth * NUM_SQ, smolgen_hidden * 2),
-            act,
-            nn.Linear(smolgen_hidden * 2, smolgen_hidden),
-            act,
-            nn.Linear(smolgen_hidden, n_heads * NUM_SQ * NUM_SQ),
-        )
+        self.smolgen = Smolgen(depth * NUM_SQ, smolgen_hidden, n_heads, activation)
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, depth, NUM_SQ)
         self.piece_norm = RMSNorm(self.depth)
         self.encoders = nn.ModuleList([Encoder(depth, n_heads, dff) for _ in range(n_layers)])
         self.transformer_hidden = nn.Sequential(
             nn.Linear(depth * NUM_SQ * 2, eval_hidden),
-            act,
+            activation,
             nn.Linear(eval_hidden, eval_hidden),
-            act,
+            activation,
         )
         self.ffn_hidden = nn.Sequential(
             nn.Linear(depth * NUM_SQ * 2, eval_hidden * 4),
-            act,
+            activation,
             nn.Linear(eval_hidden * 4, eval_hidden),
-            act,
+            activation,
         )
         self.eval = nn.Sequential(
             nn.Linear(eval_hidden * 2, eval_hidden),
-            act,
+            activation,
             nn.Linear(eval_hidden, 1),
         )
         self.classification = nn.Sequential(
             nn.Linear(eval_hidden * 2, eval_hidden),
-            act,
+            activation,
             nn.Linear(eval_hidden, 3),
         )
         self.init_weights()
@@ -249,7 +265,11 @@ class Transformer(pl.LightningModule):
         black_values,
         psqt_indices,
     ):
-        (N, _) = us.shape
+        (N, M) = white_indices.shape
+
+        # first index is policy index
+        white_policy_index, white_indices = white_indices.split([1, M - 1])
+        black_policy_index, black_indices = black_indices.split([1, M - 1])
 
         # create piece embeddings and ffn embedding
         ones = torch.ones(white_indices.shape, device=self.device)
@@ -259,13 +279,13 @@ class Transformer(pl.LightningModule):
         ffn_emb = self.ffn_hidden(ffn_emb.reshape(N, -1))
 
         # white POV score
-        white_smolgen = self.smolgen(white_emb.reshape(N, -1)).reshape(N * self.n_heads, NUM_SQ, NUM_SQ)
+        white_smolgen = self.smolgen(white_emb.reshape(N, -1))
         for encoder in self.encoders:
             white_emb = encoder(white_emb, white_smolgen)
         white_emb = white_emb.reshape(N, -1)
 
         # black POV score
-        black_smolgen = self.smolgen(black_emb.reshape(N, -1)).reshape(N * self.n_heads, NUM_SQ, NUM_SQ)
+        black_smolgen = self.smolgen(black_emb.reshape(N, -1))
         for encoder in self.encoders:
             black_emb = encoder(black_emb, black_smolgen)
         black_emb = black_emb.reshape(N, -1)

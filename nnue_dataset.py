@@ -34,7 +34,7 @@ class SparseBatch(ctypes.Structure):
         ("layer_stack_indices", ctypes.POINTER(ctypes.c_int)),
     ]
 
-    def get_tensors(self, device):
+    def get_tensors(self, device, return_policy_index=False):
         white_values = (
             torch.from_numpy(np.ctypeslib.as_array(self.white_values, shape=(self.size, self.max_active_features)))
             .pin_memory()
@@ -71,6 +71,12 @@ class SparseBatch(ctypes.Structure):
             .pin_memory()
             .to(device=device, non_blocking=True)
         )
+        policy_index = (
+            torch.from_numpy(np.ctypeslib.as_array(self.policy_index, shape=(self.size, 1)))
+            .long()
+            .pin_memory()
+            .to(device=device, non_blocking=True)
+        )
         psqt_indices = (
             torch.from_numpy(np.ctypeslib.as_array(self.psqt_indices, shape=(self.size,)))
             .long()
@@ -84,16 +90,32 @@ class SparseBatch(ctypes.Structure):
             .to(device=device, non_blocking=True)
         )
         return (
-            us,
-            them,
-            white_indices,
-            white_values,
-            black_indices,
-            black_values,
-            outcome,
-            score,
-            psqt_indices,
-            layer_stack_indices,
+            (
+                us,
+                them,
+                white_indices,
+                white_values,
+                black_indices,
+                black_values,
+                outcome,
+                score,
+                policy_index,
+                psqt_indices,
+                layer_stack_indices,
+            )
+            if return_policy_index
+            else (
+                us,
+                them,
+                white_indices,
+                white_values,
+                black_indices,
+                black_values,
+                outcome,
+                score,
+                psqt_indices,
+                layer_stack_indices,
+            )
         )
 
 
@@ -253,6 +275,7 @@ class TrainingDataProvider:
         early_fen_skipping=-1,
         param_index=0,
         device="cpu",
+        return_policy_index=False,
     ):
 
         self.feature_set = feature_set.encode("utf-8")
@@ -268,6 +291,7 @@ class TrainingDataProvider:
         self.wld_filtered = wld_filtered
         self.random_fen_skipping = random_fen_skipping
         self.param_index = param_index
+        self.return_policy_index = return_policy_index
         self.device = device
 
         if batch_size:
@@ -303,7 +327,7 @@ class TrainingDataProvider:
         v = self.fetch_next(self.stream)
 
         if v:
-            tensors = v.contents.get_tensors(self.device)
+            tensors = v.contents.get_tensors(self.device, return_policy_index=self.return_policy_index)
             self.destroy_part(v)
             return tensors
         else:
@@ -410,6 +434,7 @@ class SparseBatchProvider(TrainingDataProvider):
         early_fen_skipping=-1,
         param_index=0,
         device="cpu",
+        return_policy_index=False,
     ):
         super(SparseBatchProvider, self).__init__(
             feature_set,
@@ -427,6 +452,7 @@ class SparseBatchProvider(TrainingDataProvider):
             early_fen_skipping,
             param_index,
             device,
+            return_policy_index=return_policy_index,
         )
 
 
@@ -444,6 +470,7 @@ class SparseBatchDataset(torch.utils.data.IterableDataset):
         early_fen_skipping=-1,
         param_index=0,
         device="cpu",
+        return_policy_index=False,
     ):
         super(SparseBatchDataset).__init__()
         self.feature_set = feature_set
@@ -457,6 +484,7 @@ class SparseBatchDataset(torch.utils.data.IterableDataset):
         self.early_fen_skipping = early_fen_skipping
         self.param_index = param_index
         self.device = device
+        self.return_policy_index = return_policy_index
 
     def __iter__(self):
         return SparseBatchProvider(
@@ -471,6 +499,7 @@ class SparseBatchDataset(torch.utils.data.IterableDataset):
             early_fen_skipping=self.early_fen_skipping,
             param_index=self.param_index,
             device=self.device,
+            return_policy_index=self.return_policy_index
         )
 
 

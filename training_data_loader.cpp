@@ -57,6 +57,28 @@ static Square orient_flip(Color color, Square sq)
     }
 }
 
+static int get_policy_index(chess::Move move, Color color)
+{
+    constexpr int num_planes = 64;
+    int f = static_cast<int>(orient(color, move.from));
+    int t = static_cast<int>(orient(color, move.to));
+    int dx = t / 8 - f / 8;
+    int dy = t % 8 - f % 8;
+    int offset = f * num_planes;
+
+    if (dx == 0)
+        return offset + dy + 7 - (dy > 0);
+    else if (dy == 0)
+        return offset + 14 + dx + 7 - (dx > 0);
+    else if (dx == dy)
+        return offset + 28 + dx + 7 - (dx > 0);
+    else if (dx == -dy)
+        return offset + 42 + dx + 7 - (dx > 0);
+    else if (std::set{std::abs(dx), std::abs(dy)} == std::set{1, 2})
+        return offset + 56 + (std::abs(dx) < std::abs(dy)) + (dx > 0) * 2 + (dy > 0) * 4;
+    return -1;
+}
+
 struct Transformer
 {
     static constexpr int NUM_SQ = 64;
@@ -71,34 +93,10 @@ struct Transformer
         return piece.type() == PieceType::None ? NUM_PT - 1 : static_cast<int>(piece.type()) * 2 + (piece.color() != color);
     }
 
-    static int get_policy_index(chess::Move move, Color color)
-    {
-        constexpr int num_planes = 64;
-        int f = static_cast<int>(orient(color, move.from));
-        int t = static_cast<int>(orient(color, move.to));
-        int dx = t / 8 - f / 8;
-        int dy = t % 8 - f % 8;
-        int offset = f * num_planes;
-
-        if (dx == 0)
-            return offset + dy + 7 - (dy > 0);
-        else if (dy == 0)
-            return offset + 14 + dx + 7 - (dx > 0);
-        else if (dx == dy)
-            return offset + 28 + dx + 7 - (dx > 0);
-        else if (dx == -dy)
-            return offset + 42 + dx + 7 - (dx > 0);
-        else if (std::set{std::abs(dx), std::abs(dy)} == std::set{1, 2})
-            return offset + 56 + (std::abs(dx) < std::abs(dy)) + (dx > 0) * 2 + (dy > 0) * 4;
-        return -1;
-    }
-
     static std::pair<int, int> fill_features_sparse(const TrainingDataEntry &e, int *features, float *values, Color color)
     {
         auto &pos = e.pos;
         int j = 0;
-        // first feature is policy index:
-        int policy_index = get_policy_index(e.move, color);
 
         // NUM_SQ features are piece features
         auto ksq = pos.kingSquare(color);
@@ -494,6 +492,7 @@ struct SparseBatch
         is_white = new float[size];
         outcome = new float[size];
         score = new float[size];
+        policy_index = new int[size];
         white = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         white_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
@@ -526,6 +525,7 @@ struct SparseBatch
     float *is_white;
     float *outcome;
     float *score;
+    int *policy_index;
     int num_active_white_features;
     int num_active_black_features;
     int max_active_features;
@@ -541,6 +541,7 @@ struct SparseBatch
         delete[] is_white;
         delete[] outcome;
         delete[] score;
+        delete[] policy_index;
         delete[] white;
         delete[] black;
         delete[] white_values;
@@ -556,6 +557,7 @@ private:
         is_white[i] = static_cast<float>(e.pos.sideToMove() == Color::White);
         outcome[i] = (e.result + 1.0f) / 2.0f;
         score[i] = e.score;
+        policy_index[i] = get_policy_index(e.move, e.pos.sideToMove());
         psqt_indices[i] = (e.pos.piecesBB().count() - 1) / 4;
         layer_stack_indices[i] = psqt_indices[i];
         fill_features(FeatureSet<Ts...>{}, i, e);
