@@ -280,6 +280,13 @@ def main():
         dest="return_policy_index",
         help="policy index will be included in each batch if set to true",
     )
+    parser.add_argument(
+        "--policy-classification-weight",
+        type=float,
+        default=0.01,
+        dest="policy_classification_weight",
+        help="multiplier for policy classification loss",
+    )
     features.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -321,6 +328,7 @@ def main():
             smolgen_hidden=args.smolgen_hidden,
             eval_hidden=args.eval_hidden_depth,
             activation_function=args.activation_function,
+            policy_classification_weight=args.policy_classification_weight,
             gamma=args.gamma,
             dff=args.dff,
             lr=args.lr,
