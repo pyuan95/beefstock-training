@@ -232,7 +232,11 @@ class Transformer(pl.LightningModule):
             activation,
             nn.Linear(eval_hidden, 3),
         )
-        self.policy_classification = nn.Linear(depth, NUM_MOVES)
+        self.policy_classification = nn.Sequential(
+            nn.Linear(depth, depth),
+            activation,
+            nn.Linear(depth, NUM_MOVES),
+        )
         self.init_weights()
 
     def init_weights(self):

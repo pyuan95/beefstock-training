@@ -6,3 +6,5 @@ training/
 debug/
 CMakeFiles/
 CMakeCache.txt
+*.out
+*.err

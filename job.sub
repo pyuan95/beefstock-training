@@ -10,7 +10,7 @@
 #SBATCH --mem=16000                           # server memory requested (per node)
 #SBATCH -t 240:00:00                           # Time limit (hh:mm:ss)
 #SBATCH --partition=default_partition       # Request partition
-#SBATCH --nodelist=desa-compute-01
+#SBATCH --exclude=badjak,cuvl-compute-05
 #SBATCH --gres=gpu:2080ti:4                  # Type/number of GPUs needed
 sh command.sh
  

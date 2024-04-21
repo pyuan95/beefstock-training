@@ -83,7 +83,7 @@ struct Transformer
 {
     static constexpr int NUM_SQ = 64;
     static constexpr int NUM_PT = 13;
-    static constexpr int MAX_MOVES = 300;
+    static constexpr int MAX_MOVES = 220;
     static constexpr int FEATURES_PER_SQUARE = NUM_SQ * NUM_PT * 3;                // ksq * pt + attacking X + attacked by X
     static constexpr int MAX_ACTIVE_FEATURES = NUM_SQ + MAX_MOVES + MAX_MOVES + 1; // pieces + attacks + attacked by + policy index
     static constexpr int INPUTS = FEATURES_PER_SQUARE * NUM_SQ;
