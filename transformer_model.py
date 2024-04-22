@@ -302,7 +302,7 @@ class Transformer(pl.LightningModule):
         emb = torch.cat([ffn_emb, transformer_emb], dim=1)
 
         return (
-            self.final_eval(emb) * self.nnue2score,
+            self.final_eval(emb),
             self.outcome_classification(emb.detach()),
             self.policy_classification(side_to_play_emb).reshape(N, -1),
         )
@@ -327,9 +327,10 @@ class Transformer(pl.LightningModule):
             layer_stack_indices,
         ) = batch
         scorenet, outcome_pred, policy_pred = self(us, them, white_indices, white_values, black_indices, black_values, psqt_indices)
-        q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
-        qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
-        qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
+        # q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
+        # qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
+        # qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
+        qf = scorenet.sigmoid()
 
         p = (score - offset) / out_scaling
         pm = (-score - offset) / out_scaling
