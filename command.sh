@@ -1,6 +1,6 @@
 python3 train.py \
-    "/home/py95/training_data.binpack" \
-    "/home/py95/training_data.binpack" \
+    "/home/py95/data/training_data.binpack" \
+    "/home/py95/data/training_data.binpack" \
     --gpus "0,1,2,3" \
     --depth-list 512,256,256,128 \
     --dff-list 256,256,128 \
