@@ -104,43 +104,76 @@ class RMSNorm(nn.Module):
         return self.norm(t)
 
 
+# class Encoder(nn.Module):
+#     def __init__(self, depth, n_heads, dff, eps=1e-5):
+#         super().__init__()
+#         self.self_attn = nn.MultiheadAttention(
+#             depth,
+#             n_heads,
+#             dropout=0.0,
+#             batch_first=True,
+#         )
+
+#         self.ffn = nn.Sequential(
+#             nn.Linear(depth, dff, bias=True),
+#             nn.ReLU(),
+#             nn.Linear(dff, depth, bias=True),
+#         )
+#         self.norm1 = RMSNorm(depth, eps=eps)
+#         self.norm2 = RMSNorm(depth, eps=eps)
+#         self.nsq = NUM_SQ  # for torch.jit.script
+
+#     def forward(self, x, attn_mask=None):
+#         # attacks: N, NUM_SQ, NUM_SQ
+#         N = x.shape[0]
+#         attn_out, _ = self.self_attn(x, x, x, need_weights=False, attn_mask=attn_mask)
+#         x1 = self.norm1(x + attn_out)
+#         x2 = self.norm2(self.ffn(x1) + x1)
+#         return x2
+
+
+@torch.jit.script
+def scaled_dot_product_attention(keys, queries, values, attention_mask, num_heads):
+    # assumes keys and values are of shape N, S, D, and queries N, L, D.
+    N, S, D = keys.shape
+    _, L, _ = queries.shape
+    keys = keys.reshape(N, S, num_heads, D // num_heads).transpose(-2, -3)
+    queries = queries.reshape(N, L, num_heads, D // num_heads).transpose(-2, -3)
+    values = values.reshape(N, S, num_heads, D // num_heads).transpose(-2, -3)
+    scale = 1 / torch.sqrt(keys.shape[-1])
+    attn_weights = queries @ keys.transpose(-1, -2) * scale + attention_mask
+    attn_weights = attn_weights.softmax(-1)
+    output = attn_weights @ values  # N, ..., num_heads, L, D // num_heads
+    output = output.transpose(-2, -3)  # N, ..., L, num_heads, D // num_heads
+    output = output.flatten(-2, -1)
+    return output, attn_weights
+
+
 class Encoder(nn.Module):
-    def __init__(self, depth, n_heads, dff, eps=1e-5):
+    def __init__(self, depth_in, dff, depth_out, activation, eps=1e-5):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            depth,
-            n_heads,
-            dropout=0.0,
-            batch_first=True,
-        )
-
+        self.d_in = depth_in
+        self.d_out = depth_out
+        self.kqv = nn.Linear(depth_in, depth_in * 3, bias=False)
         self.ffn = nn.Sequential(
-            nn.Linear(depth, dff, bias=True),
-            nn.ReLU(),
-            nn.Linear(dff, depth, bias=True),
+            nn.Linear(depth_in, dff, bias=True),
+            activation,
+            nn.Linear(dff, depth_out, bias=True),
         )
-        self.norm1 = RMSNorm(depth, eps=eps)
-        self.norm2 = RMSNorm(depth, eps=eps)
-        self.nsq = NUM_SQ  # for torch.jit.script
+        self.norm = RMSNorm(depth_out, eps=eps)
 
-    def forward(self, x, attn_mask=None):
-        # attacks: N, NUM_SQ, NUM_SQ
-        N = x.shape[0]
+    def forward(self, x, attn_mask, num_heads):
         """
-        attacks = attacks.unsqueeze(1)
-        attacked = attacks.transpose(2, 3)
-        attn_adjustments = (
-            attacks * self.attacks_scale.exp2()
-            + attacked * self.attacked_scale.exp2()
-            + self.static_movement_bonus * self.static_scale.exp2()
-        )
-        attn_out, _ = self.self_attn(x, x, x, need_weights=False, attn_mask=attn_adjustments.reshape(-1, NUM_SQ, NUM_SQ))
+        shape of x: N, L, D_in
+        shape of attn_mask: N, num_heads, L, L
+        returns: tensor of shape N, L, D_out
         """
-
-        attn_out, _ = self.self_attn(x, x, x, need_weights=False, attn_mask=attn_mask)
-        x1 = self.norm1(x + attn_out)
-        x2 = self.norm2(self.ffn(x1) + x1)
-        return x2
+        N, L, _ = x.shape
+        k, q, v = self.kqv(x).split(self.d_in, dim=-1)
+        output, _ = scaled_dot_product_attention(k, q, v, attn_mask, num_heads)
+        output = self.norm(self.ffn(output))
+        x = x.reshape(N, L, -1, self.d_out).mean(-2)
+        return x + output
 
 
 class Smolgen(nn.Module):
@@ -161,7 +194,7 @@ class Smolgen(nn.Module):
         N = emb.shape[0]
         emb = self.hidden(emb).reshape(N, 1, -1)
         emb = self.out(emb)  # (N, NUM_SQ * NUM_SQ, n_heads)
-        return emb.transpose(1, 2).reshape(N * self.num_heads, NUM_SQ, NUM_SQ)
+        return emb.transpose(1, 2).reshape(N, self.num_heads, NUM_SQ, NUM_SQ)
 
 
 class Transformer(pl.LightningModule):
@@ -177,9 +210,8 @@ class Transformer(pl.LightningModule):
 
     def __init__(
         self,
-        n_layers=3,
-        depth=64,
-        dff=96,
+        depth_list=[64],
+        dff_list=[64],
         eval_hidden=128,
         smolgen_hidden=64,
         n_heads=8,
@@ -197,7 +229,6 @@ class Transformer(pl.LightningModule):
         self.max_epoch = max_epoch
         self.end_lambda = end_lambda
         self.gamma = gamma
-        self.depth = depth
         self.n_heads = n_heads
         self.policy_classification_weight = policy_classification_weight
         self.nnue2score = 300.0
@@ -206,18 +237,24 @@ class Transformer(pl.LightningModule):
             "silu": nn.SiLU(),
         }[activation_function]
 
-        self.smolgen = Smolgen(depth * NUM_SQ, smolgen_hidden, n_heads, activation)
-        self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, depth, NUM_SQ)
-        self.piece_norm = RMSNorm(self.depth)
-        self.encoders = nn.ModuleList([Encoder(depth, n_heads, dff) for _ in range(n_layers)])
+        initial_depth = depth_list[0]
+        final_depth = depth_list[-1]
+        self.initial_depth = initial_depth
+        self.final_depth = final_depth
+        self.smolgen = Smolgen(initial_depth * NUM_SQ, smolgen_hidden, n_heads, activation)
+        self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
+        self.piece_norm = RMSNorm(initial_depth)
+        self.encoders = nn.ModuleList(
+            [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
+        )
         self.transformer_hidden = nn.Sequential(
-            nn.Linear(depth * NUM_SQ * 2, eval_hidden),
+            nn.Linear(final_depth * NUM_SQ * 2, eval_hidden),
             activation,
             nn.Linear(eval_hidden, eval_hidden),
             activation,
         )
         self.ffn_hidden = nn.Sequential(
-            nn.Linear(depth * NUM_SQ * 2, eval_hidden * 4),
+            nn.Linear(initial_depth * NUM_SQ * 2, eval_hidden * 4),
             activation,
             nn.Linear(eval_hidden * 4, eval_hidden),
             activation,
@@ -233,31 +270,17 @@ class Transformer(pl.LightningModule):
             nn.Linear(eval_hidden, 3),
         )
         self.policy_classification = nn.Sequential(
-            nn.Linear(depth, depth),
+            nn.Linear(final_depth, final_depth),
             activation,
-            nn.Linear(depth, NUM_MOVES),
+            nn.Linear(final_depth, NUM_MOVES),
         )
         self.init_weights()
 
     def init_weights(self):
         with torch.no_grad():
-            # init psqt
-            # input_weights = self.material_weights.weight
-            # input_bias = self.material_weights.bias
-
-            # vals = [126, 781, 825, 1276, 2538]
-            # sc = 1 / self.nnue2score
-            # input_weights[:] = 0.0
-            # input_bias[:] = 0.0
-            # input_weights = input_weights.view(NUM_SQ, 3, NUM_SQ * NUM_PT, NUM_PSQT_BUCKETS)
-            # for i in range(5):
-            #     input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
-            #     input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
-            #     input_weights[:, 0, torch.arange(i * 2, NUM_SQ * NUM_PT, NUM_PT), :] = vals[i] * sc
-            #     input_weights[:, 0, torch.arange(i * 2 + 1, NUM_SQ * NUM_PT, NUM_PT), :] = -vals[i] * sc
-
             # init piece encoder weights the same way
-            input_weights = self.piece_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, self.depth)  # ksq, psq/at/atr, sq, pt, depth
+            # ksq, psq/at/atr, sq, pt, depth
+            input_weights = self.piece_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, self.initial_depth)
             for i in range(3):
                 input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
 
@@ -266,17 +289,14 @@ class Transformer(pl.LightningModule):
         us,
         them,
         white_indices,
-        white_values,
         black_indices,
-        black_values,
-        psqt_indices,
     ):
         N = us.shape[0]
 
         # create piece embeddings and ffn embedding
         ones = torch.ones(white_indices.shape, device=self.device)
-        white_emb = self.piece_norm(self.piece_encoder(white_indices, ones).reshape(N, NUM_SQ, self.depth))
-        black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.depth))
+        white_emb = self.piece_norm(self.piece_encoder(white_indices, ones).reshape(N, NUM_SQ, self.initial_depth))
+        black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.initial_depth))
         ffn_emb = torch.cat([white_emb, black_emb], dim=1) * us.reshape(N, 1, 1) + torch.cat([black_emb, white_emb], dim=1) * them.reshape(
             N, 1, 1
         )
@@ -285,16 +305,16 @@ class Transformer(pl.LightningModule):
         # white POV score
         white_smolgen = self.smolgen(white_emb.reshape(N, -1))
         for encoder in self.encoders:
-            white_emb = encoder(white_emb, white_smolgen)
+            white_emb = encoder(white_emb, white_smolgen, self.n_heads)
         white_emb = white_emb.reshape(N, -1)
 
         # black POV score
         black_smolgen = self.smolgen(black_emb.reshape(N, -1))
         for encoder in self.encoders:
-            black_emb = encoder(black_emb, black_smolgen)
+            black_emb = encoder(black_emb, black_smolgen, self.n_heads)
         black_emb = black_emb.reshape(N, -1)
 
-        side_to_play_emb = (white_emb * us + black_emb * them).reshape(N, NUM_SQ, self.depth)
+        side_to_play_emb = (white_emb * us + black_emb * them).reshape(N, NUM_SQ, self.final_depth)
 
         transformer_emb = torch.cat([white_emb, black_emb], dim=1) * us + torch.cat([black_emb, white_emb], dim=1) * them
         transformer_emb = self.transformer_hidden(transformer_emb)
@@ -326,7 +346,7 @@ class Transformer(pl.LightningModule):
             psqt_indices,
             layer_stack_indices,
         ) = batch
-        scorenet, outcome_pred, policy_pred = self(us, them, white_indices, white_values, black_indices, black_values, psqt_indices)
+        scorenet, outcome_pred, policy_pred = self(us, them, white_indices, black_indices)
         # q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
         # qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
         # qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).

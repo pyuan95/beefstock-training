@@ -226,32 +226,25 @@ def main():
         help="Skip n plies from the start.",
     )
     parser.add_argument(
-        "--n_layers",
-        type=int,
-        default=3,
-        dest="n_layers",
-        help="Number of layers for the transformer model",
-    )
-    parser.add_argument(
-        "--n_heads",
+        "--num-heads",
         type=int,
         default=1,
         dest="n_heads",
         help="Number of heads for the model",
     )
     parser.add_argument(
-        "--depth",
+        "--depth-list",
         type=int,
-        default=32,
-        dest="depth",
-        help="Depth for the transformer model",
+        dest="depth_list",
+        n_args="+",
+        help="list of depths for the transformer model. if n depths are specified, n - 1 layers will be used.",
     )
     parser.add_argument(
-        "--dff",
+        "--dff-list",
         type=int,
-        default=32,
-        dest="dff",
-        help="Depth of the dff for the transformer model",
+        dest="dff_list",
+        n_args="+",
+        help="list of dffs for the transformer model. length of this list must be exactly one less than depth_list.",
     )
     parser.add_argument(
         "--smolgen-hidden",
@@ -283,7 +276,7 @@ def main():
     parser.add_argument(
         "--policy-classification-weight",
         type=float,
-        default=0.01,
+        default=0.0001,
         dest="policy_classification_weight",
         help="multiplier for policy classification loss",
     )
@@ -319,9 +312,9 @@ def main():
     max_epoch = args.max_epochs or 800
     if args.features == "Transformer":
         nnue = T.Transformer(
-            n_layers=args.n_layers,
             n_heads=args.n_heads,
-            depth=args.depth,
+            depth_list=args.depth_list,
+            dff_list=args.dff_list,
             start_lambda=start_lambda,
             max_epoch=max_epoch,
             end_lambda=end_lambda,
@@ -330,7 +323,6 @@ def main():
             activation_function=args.activation_function,
             policy_classification_weight=args.policy_classification_weight,
             gamma=args.gamma,
-            dff=args.dff,
             lr=args.lr,
         )
         if args.resume_from_model is not None:
@@ -347,9 +339,9 @@ def main():
                 print("loading from", version)
                 nnue = nnue.load_from_checkpoint(
                     version,
-                    n_layers=args.n_layers,
                     n_heads=args.n_heads,
-                    depth=args.depth,
+                    depth_list=args.depth_list,
+                    dff_list=args.dff_list,
                     start_lambda=start_lambda,
                     max_epoch=max_epoch,
                     end_lambda=end_lambda,
@@ -358,7 +350,6 @@ def main():
                     activation_function=args.activation_function,
                     policy_classification_weight=args.policy_classification_weight,
                     gamma=args.gamma,
-                    dff=args.dff,
                     lr=args.lr,
                 )
     else:
@@ -372,6 +363,14 @@ def main():
                 lr=args.lr,
                 param_index=args.param_index,
             )
+            nnue.set_feature_set(feature_set)
+            nnue.start_lambda = start_lambda
+            nnue.end_lambda = end_lambda
+            nnue.max_epoch = max_epoch
+            nnue.gamma = args.gamma
+            nnue.lr = args.lr
+            nnue.param_index = args.param_index
+
         else:
             nnue = torch.load(args.resume_from_model)
             nnue.set_feature_set(feature_set)

@@ -2,10 +2,9 @@ python3 train.py \
     "/home/py95/training_data.binpack" \
     "/home/py95/training_data.binpack" \
     --gpus "0,1,2,3" \
-    --depth 256 \
-    --dff 384 \
-    --n_heads 16 \
-    --n_layers 2 \
+    --depth-list 512 256 256 128 \
+    --dff-list 256 256 128 \
+    --num-heads 16 \
     --threads 6 \
     --num-workers 1 \
     --batch-size 1920 \

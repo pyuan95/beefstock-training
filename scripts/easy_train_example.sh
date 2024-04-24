@@ -1,6 +1,6 @@
-python easy_train.py \
-    --training-dataset=/home/vondele/chess/vondele/gensfen/gensfen_2021_09_02/nodes5000pv2_UHO.binpack \
-    --validation-dataset=/home/vondele/chess/vondele/gensfen/gensfen_2021_09_02/nodes5000pv2_UHO.binpack \
+python3 easy_train.py \
+    --training-dataset="/media/patrick/New Volume/chess_project/test80-2023-10-oct-2tb7p.binpack" \
+    --validation-dataset="/media/patrick/New Volume/chess_project/test80-2023-10-oct-2tb7p.binpack" \
     --num-workers=4 \
     --threads=2 \
     --gpus="0," \
