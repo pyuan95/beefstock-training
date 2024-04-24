@@ -229,7 +229,7 @@ class Transformer(pl.LightningModule):
         self.max_epoch = max_epoch
         self.end_lambda = end_lambda
         self.gamma = gamma
-        self.n_heads = n_heads
+        self.n_heads = torch.tensor(n_heads)
         self.policy_classification_weight = policy_classification_weight
         self.nnue2score = 300.0
         activation = {
@@ -241,11 +241,11 @@ class Transformer(pl.LightningModule):
         final_depth = depth_list[-1]
         self.initial_depth = initial_depth
         self.final_depth = final_depth
-        self.smolgen = Smolgen(initial_depth * NUM_SQ, smolgen_hidden, n_heads, activation)
+        self.smolgen = torch.compile(Smolgen(initial_depth * NUM_SQ, smolgen_hidden, n_heads, activation))
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.piece_norm = RMSNorm(initial_depth)
         self.encoders = nn.ModuleList(
-            [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
+            [torch.compile(Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation)) for i in range(len(depth_list) - 1)]
         )
         self.transformer_hidden = nn.Sequential(
             nn.Linear(final_depth * NUM_SQ * 2, eval_hidden),
@@ -254,9 +254,9 @@ class Transformer(pl.LightningModule):
             activation,
         )
         self.ffn_hidden = nn.Sequential(
-            nn.Linear(initial_depth * NUM_SQ * 2, eval_hidden * 4),
+            nn.Linear(initial_depth * NUM_SQ * 2, eval_hidden * 2),
             activation,
-            nn.Linear(eval_hidden * 4, eval_hidden),
+            nn.Linear(eval_hidden * 2, eval_hidden),
             activation,
         )
         self.final_eval = nn.Sequential(

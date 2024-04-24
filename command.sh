@@ -7,7 +7,7 @@ python3 train.py \
     --num-heads 16 \
     --threads 6 \
     --num-workers 1 \
-    --batch-size 1920 \
+    --batch-size 1024 \
     --random-fen-skipping 3 \
     --features Transformer \
     --lr 0.00009 \

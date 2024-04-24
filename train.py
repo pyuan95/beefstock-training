@@ -81,6 +81,10 @@ def str2bool(v):
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+def list_of_ints(arg):
+    return list(map(int, arg.split(",")))
+
+
 def flatten_once(lst):
     return sum(lst, [])
 
@@ -234,16 +238,14 @@ def main():
     )
     parser.add_argument(
         "--depth-list",
-        type=int,
+        type=list_of_ints,
         dest="depth_list",
-        n_args="+",
         help="list of depths for the transformer model. if n depths are specified, n - 1 layers will be used.",
     )
     parser.add_argument(
         "--dff-list",
-        type=int,
+        type=list_of_ints,
         dest="dff_list",
-        n_args="+",
         help="list of dffs for the transformer model. length of this list must be exactly one less than depth_list.",
     )
     parser.add_argument(
