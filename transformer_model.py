@@ -245,7 +245,7 @@ class Transformer(pl.LightningModule):
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.piece_norm = RMSNorm(initial_depth)
         self.encoders = nn.ModuleList(
-            [torch.compile(Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation)) for i in range(len(depth_list) - 1)]
+            [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
         )
         self.transformer_hidden = nn.Sequential(
             nn.Linear(final_depth * NUM_SQ * 2, eval_hidden),

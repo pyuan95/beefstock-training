@@ -1,7 +1,7 @@
 python3 train.py \
     "/home/py95/data/training_data.binpack" \
     "/home/py95/data/training_data.binpack" \
-    --gpus "0,1,2,3" \
+    --gpus "0,1,2" \
     --depth-list 512,256,256,128 \
     --dff-list 256,256,128 \
     --num-heads 16 \
@@ -22,3 +22,4 @@ python3 train.py \
     --return-policy-index yes \
     --epoch-size 8192000 \
     --default_root_dir ./training/runs/run_0 \
+    --resume-from-model yes \

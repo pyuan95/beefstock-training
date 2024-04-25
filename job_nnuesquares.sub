@@ -11,6 +11,6 @@
 #SBATCH -t 240:00:00                           # Time limit (hh:mm:ss)
 #SBATCH --partition=gpu       # Request partition
 #SBATCH --exclude=badjak,cuvl-compute-05
-#SBATCH --gres=gpu:3090:3                  # Type/number of GPUs needed
+#SBATCH --gres=gpu:2080ti:4                  # Type/number of GPUs needed
 sh command.sh
  
