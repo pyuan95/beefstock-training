@@ -15,17 +15,13 @@ def orient(is_white_pov: bool, sq: int):
 
 class Features(FeatureBlock):
     def __init__(self):
-        super(Features, self).__init__(
-            "NNUESquare", 0x5F134CBA, OrderedDict([("NNUESquare", NUM_FEATURES)])
-        )
+        super(Features, self).__init__("DenseSquares", 0x5F134CBA, OrderedDict([("DenseSquares", NUM_FEATURES)]))
 
     def get_active_features(self, board: chess.Board):
-        raise Exception(
-            "Not supported yet, you must use the c++ data loader for support during training"
-        )
+        raise Exception("Not supported yet, you must use the c++ data loader for support during training")
 
     def get_initial_psqt_features(self):
-        raise Exception("Not supported yet for NNUESquare")
+        raise Exception("Not supported yet for DenseSquares")
 
 
 """

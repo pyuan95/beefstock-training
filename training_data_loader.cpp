@@ -1111,6 +1111,10 @@ extern "C"
         {
             return new SparseBatch(FeatureSet<Transformer>{}, entries);
         }
+        else if (feature_set == "DenseSquares")
+        {
+            return new SparseBatch(FeatureSet<Transformer>{}, entries);
+        }
         fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
         return nullptr;
     }
@@ -1170,6 +1174,10 @@ extern "C"
             return new FeaturedBatchStream<FeatureSet<HalfKAv2_hmFactorized>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
         }
         else if (feature_set == "Transformer")
+        {
+            return new FeaturedBatchStream<FeatureSet<Transformer>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
+        }
+        else if (feature_set == "DenseSquares")
         {
             return new FeaturedBatchStream<FeatureSet<Transformer>, SparseBatch>(concurrency, filenames_vec, batch_size, cyclic, skipPredicate);
         }

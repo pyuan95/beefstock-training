@@ -13,7 +13,7 @@ import halfka
 import halfka_v2
 import halfka_v2_hm
 import transformer_features
-import nnuesquare_features
+import dense_squares_features
 
 _feature_modules = [
     halfkp,
@@ -21,7 +21,7 @@ _feature_modules = [
     halfka_v2,
     halfka_v2_hm,
     transformer_features,
-    nnuesquare_features,
+    dense_squares_features,
 ]
 
 _feature_blocks_by_name = dict()

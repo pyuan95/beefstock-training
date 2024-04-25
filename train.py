@@ -1,6 +1,7 @@
 import argparse
 import model as M
 import transformer_model as T
+import dense_squares_model as D
 import nnue_dataset
 import pytorch_lightning as pl
 import features
@@ -249,6 +250,12 @@ def main():
         help="list of dffs for the transformer model. length of this list must be exactly one less than depth_list.",
     )
     parser.add_argument(
+        "--depth",
+        type=int,
+        dest="depth",
+        help="depth for DenseSquares model",
+    )
+    parser.add_argument(
         "--smolgen-hidden",
         type=int,
         default=64,
@@ -312,7 +319,20 @@ def main():
     start_lambda = args.start_lambda or args.lambda_
     end_lambda = args.end_lambda or args.lambda_
     max_epoch = args.max_epochs or 800
-    if args.features == "Transformer":
+
+    if args.features == "DenseSquares":
+        nnue = D.DenseSquares(
+            depth=args.depth,
+            eval_hidden=args.eval_hidden_depth,
+            start_lambda=start_lambda,
+            max_epoch=max_epoch,
+            end_lambda=end_lambda,
+            activation_function=args.activation_function,
+            policy_classification_weight=args.policy_classification_weight,
+            gamma=args.gamma,
+            lr=args.lr,
+        )
+    elif args.features == "Transformer":
         nnue = T.Transformer(
             n_heads=args.n_heads,
             depth_list=args.depth_list,
