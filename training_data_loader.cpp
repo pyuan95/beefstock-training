@@ -1215,20 +1215,23 @@ extern "C"
 
  #include <chrono>
 
-// int main()
-// {
-//     const char* filenames = "/media/patrick/New Volume/chess_project/test80-2023-10-oct-2tb7p.binpack";
-//     auto stream = create_sparse_batch_stream("HalfKP", 1, 1, &filenames, 8192, true, false, 0, false, -1, 0);
-//     auto t0 = std::chrono::high_resolution_clock::now();
-//     for (int i = 0; i < 1000; ++i)
-//     {
-//         auto batch = stream->next();
-//         destroy_sparse_batch(batch);
-//         if (i % 100 == 0) {
-//             std::cout << batch->policy_index[0] << "\t";
-//             std::cout << batch->policy_index[100] << "\n";
-//         }
-//     }
-//     auto t1 = std::chrono::high_resolution_clock::now();
-//     std::cout << (t1 - t0).count() / 1e9 << "s\n";
-// }
+int main(int argc, char* argv[])
+{
+    auto stream = create_sparse_batch_stream("HalfKP", 12, 1, &argv[1], 10000, false, true, 0, false, -1, 0);
+    long examples_cnt = 0;
+    long i = 0;
+    while (1)
+    {
+        auto batch = stream->next();
+        if (!batch) {
+            std::cout << "done!\n";
+            break;
+        }
+        destroy_sparse_batch(batch);
+        if (i % 1000 == 0) {
+            std::cout << examples_cnt << "\n";
+        }
+        examples_cnt += 10000;
+        i += 1;
+    }
+}

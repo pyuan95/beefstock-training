@@ -14,12 +14,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED 17)
 
 add_library(training_data_loader SHARED training_data_loader.cpp)
+add_executable(count_examples training_data_loader.cpp)
 
 find_package(Threads REQUIRED)
 
 target_link_libraries(training_data_loader Threads::Threads)
 
 install(
-  TARGETS training_data_loader
+  TARGETS training_data_loader count_examples
   RUNTIME DESTINATION .
   LIBRARY DESTINATION .)
