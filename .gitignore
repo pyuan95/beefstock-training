@@ -8,3 +8,5 @@ CMakeFiles/
 CMakeCache.txt
 *.out
 *.err
+*.so
+count_examples
