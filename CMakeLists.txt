@@ -19,6 +19,7 @@ add_executable(count_examples training_data_loader.cpp)
 find_package(Threads REQUIRED)
 
 target_link_libraries(training_data_loader Threads::Threads)
+target_link_libraries(count_examples Threads::Threads)
 
 install(
   TARGETS training_data_loader count_examples

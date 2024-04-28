@@ -1,14 +1,14 @@
 python3 train.py \
     "/home/py95/data/training_data.binpack" \
     "/home/py95/data/training_data.binpack" \
-    --gpus "0,1,2" \
-    --depth-list 512,256,256,128 \
-    --dff-list 256,256,128 \
+    --gpus "0,1,2,3" \
+    --depth-list 512,512 \
+    --dff-list 512,512 \
     --num-heads 16 \
     --threads 6 \
     --num-workers 1 \
-    --batch-size 2048 \
-    --random-fen-skipping 3 \
+    --batch-size 1024 \
+    --random-fen-skipping 16 \
     --features Transformer \
     --lr 0.00009 \
     --lambda 1.0 \
@@ -18,8 +18,7 @@ python3 train.py \
     --smolgen-hidden 64 \
     --eval-hidden-depth 128 \
     --activation-function relu \
-    --policy-classification-weight 0.000001 \
+    --policy-classification-weight 0.000002 \
     --return-policy-index yes \
     --epoch-size 8192000 \
-    --default_root_dir ./training/runs/run_0 \
-    --resume-from-model yes \
+    --default_root_dir ./training/runs/transformer \

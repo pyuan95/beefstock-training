@@ -372,10 +372,10 @@ class Transformer(pl.LightningModule):
 
         loss = regression_loss + outcome_classification_loss + policy_classification_loss * self.policy_classification_weight
         self.log(loss_type, loss)
-        self.log("regression loss", regression_loss)
-        self.log("outcome accuracy", accuracy(outcome_pred, outcome_true))
-        self.log("policy accuracy", accuracy(policy_pred, policy_index))
-        self.log("MAE", torch.abs(pt - qf).mean())
+        self.log("regression loss", regression_loss, sync_dist=True)
+        self.log("outcome accuracy", accuracy(outcome_pred, outcome_true), sync_dist=True)
+        self.log("policy accuracy", accuracy(policy_pred, policy_index), sync_dist=True)
+        self.log("MAE", torch.abs(pt - qf).mean(), sync_dist=True)
         return loss
 
     def training_step(self, batch, batch_idx):

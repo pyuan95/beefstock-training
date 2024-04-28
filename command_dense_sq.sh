@@ -6,7 +6,7 @@ python3 train.py \
     --depth 256 \
     --num-workers 1 \
     --batch-size 8192 \
-    --random-fen-skipping 3 \
+    --random-fen-skipping 16 \
     --features DenseSquares \
     --lr 0.0001 \
     --lambda 1.0 \
@@ -15,10 +15,10 @@ python3 train.py \
     --max_epochs 4000 \
     --eval-hidden-depth 256 \
     --activation-function silu \
-    --policy-classification-weight 0.000002 \
+    --policy-classification-weight 0.0 \
     --return-policy-index yes \
     --epoch-size 8192000 \
-    --default_root_dir ./training/runs/run_0 \
+    --default_root_dir ./training/runs/dense_sq \
 
 # "/media/patrick/New Volume/chess_project/test80-2023-10-oct-2tb7p.binpack"
 # "/home/py95/data/training_data.binpack"

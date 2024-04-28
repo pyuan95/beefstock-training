@@ -440,7 +440,8 @@ def main():
         every_n_epochs=args.network_save_period,
         save_top_k=-1,
     )
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy="ddp")
+    from pytorch_lightning.strategies.ddp import DDPStrategy
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy=DDPStrategy(find_unused_parameters=False))
 
     main_device = (
         trainer.strategy.root_device if trainer.strategy.root_device.index is None else "cuda:" + str(trainer.strategy.root_device.index)
