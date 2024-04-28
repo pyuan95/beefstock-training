@@ -1,9 +1,9 @@
 python3 train.py \
-    "/home/py95/data/training_data.binpack" \
-    "/home/py95/data/training_data.binpack" \
+    "/home/py95/data/2022.binpack" \
+    "/home/py95/data/2023.binpack" \
     --gpus "0,1,2,3" \
-    --depth-list 512,512 \
-    --dff-list 512,512 \
+    --depth-list 512,256,128 \
+    --dff-list 256,256 \
     --num-heads 16 \
     --threads 6 \
     --num-workers 1 \
