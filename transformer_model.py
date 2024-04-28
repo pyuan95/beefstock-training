@@ -225,6 +225,7 @@ class Transformer(pl.LightningModule):
         activation_function="relu",
     ):
         super(Transformer, self).__init__()
+        self.save_hyperparameters()
         self.lr = lr
         self.start_lambda = start_lambda
         self.max_epoch = max_epoch
