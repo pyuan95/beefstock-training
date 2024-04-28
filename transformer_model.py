@@ -172,8 +172,8 @@ class Encoder(nn.Module):
         k, q, v = self.kqv(x).split(self.d_in, dim=-1)
         output, _ = scaled_dot_product_attention(k, q, v, attn_mask, num_heads)
         output = self.norm(self.ffn(output))
-        x = x.reshape(N, L, -1, self.d_out).mean(-2)
-        return x + output
+        # x = x.reshape(N, L, -1, self.d_out).mean(-2)
+        return output
 
 
 class Smolgen(nn.Module):
@@ -213,6 +213,7 @@ class Transformer(pl.LightningModule):
         depth_list=[64],
         dff_list=[64],
         eval_hidden=128,
+        smolgen_initial=64,
         smolgen_hidden=64,
         n_heads=8,
         gamma=0.95,
@@ -241,9 +242,10 @@ class Transformer(pl.LightningModule):
         final_depth = depth_list[-1]
         self.initial_depth = initial_depth
         self.final_depth = final_depth
-        self.smolgen = torch.compile(Smolgen(initial_depth * NUM_SQ, smolgen_hidden, n_heads, activation))
-        self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.piece_norm = RMSNorm(initial_depth)
+        self.smolgen = torch.compile(Smolgen(smolgen_hidden * NUM_SQ, smolgen_hidden, n_heads, activation))
+        self.smolgen_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, smolgen_hidden, NUM_SQ)
+        self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.encoders = nn.ModuleList(
             [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
         )
@@ -254,7 +256,7 @@ class Transformer(pl.LightningModule):
             activation,
         )
         self.ffn_hidden = nn.Sequential(
-            nn.Linear(initial_depth * NUM_SQ * 2, eval_hidden * 2),
+            nn.Linear(initial_depth * 2, eval_hidden * 2),
             activation,
             nn.Linear(eval_hidden * 2, eval_hidden),
             activation,
@@ -284,32 +286,28 @@ class Transformer(pl.LightningModule):
             for i in range(3):
                 input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
 
-    def forward(
-        self,
-        us,
-        them,
-        white_indices,
-        black_indices,
-    ):
+    def forward(self, us, them, white_indices, white_values, black_indices, black_values):
         N = us.shape[0]
 
         # create piece embeddings and ffn embedding
         ones = torch.ones(white_indices.shape, device=self.device)
         white_emb = self.piece_norm(self.piece_encoder(white_indices, ones).reshape(N, NUM_SQ, self.initial_depth))
         black_emb = self.piece_norm(self.piece_encoder(black_indices, ones).reshape(N, NUM_SQ, self.initial_depth))
-        ffn_emb = torch.cat([white_emb, black_emb], dim=1) * us.reshape(N, 1, 1) + torch.cat([black_emb, white_emb], dim=1) * them.reshape(
-            N, 1, 1
-        )
-        ffn_emb = self.ffn_hidden(ffn_emb.reshape(N, -1))
+        white_ffn_emb = self.piece_encoder(white_indices, white_values).view(N, NUM_SQ, self.initial_depth).sum(1)
+        black_ffn_emb = self.piece_encoder(black_indices, black_values).view(N, NUM_SQ, self.initial_depth).sum(1)
+        ffn_emb = torch.cat([white_ffn_emb, black_ffn_emb], dim=1) * us + torch.cat([white_ffn_emb, black_ffn_emb], dim=1) * them
+        ffn_emb = self.ffn_hidden(ffn_emb)
 
         # white POV score
-        white_smolgen = self.smolgen(white_emb.reshape(N, -1))
+        white_smolgen = self.smolgen_encoder(white_indices, ones)
+        white_smolgen = self.smolgen(white_smolgen)
         for encoder in self.encoders:
             white_emb = encoder(white_emb, white_smolgen, self.n_heads)
         white_emb = white_emb.reshape(N, -1)
 
         # black POV score
-        black_smolgen = self.smolgen(black_emb.reshape(N, -1))
+        black_smolgen = self.smolgen_encoder(black_indices, ones)
+        black_smolgen = self.smolgen(black_smolgen)
         for encoder in self.encoders:
             black_emb = encoder(black_emb, black_smolgen, self.n_heads)
         black_emb = black_emb.reshape(N, -1)

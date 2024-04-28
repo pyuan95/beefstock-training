@@ -15,6 +15,7 @@ python3 train.py \
     --gamma 0.998 \
     --validation-size 8192 \
     --max_epochs 4000 \
+    --smolgen-initial 64 \
     --smolgen-hidden 64 \
     --eval-hidden-depth 128 \
     --activation-function relu \

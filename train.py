@@ -256,6 +256,13 @@ def main():
         help="depth for DenseSquares model",
     )
     parser.add_argument(
+        "--smolgen-initial",
+        type=int,
+        default=64,
+        dest="smolgen_initial",
+        help="smolgen initial depth",
+    )
+    parser.add_argument(
         "--smolgen-hidden",
         type=int,
         default=64,
