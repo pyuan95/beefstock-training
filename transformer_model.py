@@ -237,6 +237,7 @@ class Transformer(pl.LightningModule):
         activation = {
             "relu": nn.ReLU(),
             "silu": nn.SiLU(),
+            "gelu": nn.GELU(),
         }[activation_function]
 
         initial_depth = depth_list[0]
@@ -257,6 +258,7 @@ class Transformer(pl.LightningModule):
             activation,
         )
         self.ffn_hidden = nn.Sequential(
+            activation,
             nn.Linear(initial_depth * 2, eval_hidden * 2),
             activation,
             nn.Linear(eval_hidden * 2, eval_hidden),
@@ -284,6 +286,10 @@ class Transformer(pl.LightningModule):
             # init piece encoder weights the same way
             # ksq, psq/at/atr, sq, pt, depth
             input_weights = self.piece_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, self.initial_depth)
+            for i in range(3):
+                input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
+
+            input_weights = self.smolgen_encoder.weight.view(NUM_SQ, 3, NUM_SQ, NUM_PT, -1)
             for i in range(3):
                 input_weights[:, i : i + 1, :, :, :] = input_weights[:1, i : i + 1, :1, :, :]
 
