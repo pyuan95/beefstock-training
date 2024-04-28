@@ -351,7 +351,7 @@ class Transformer(pl.LightningModule):
             psqt_indices,
             layer_stack_indices,
         ) = batch
-        scorenet, outcome_pred, policy_pred = self(us, them, white_indices, black_indices)
+        scorenet, outcome_pred, policy_pred = self(us, them, white_indices, white_values, black_indices, black_values)
         # q = (scorenet - offset) / in_scaling  # used to compute the chance of a win
         # qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
         # qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
