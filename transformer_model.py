@@ -172,8 +172,8 @@ class Encoder(nn.Module):
         k, q, v = self.kqv(x).split(self.d_in, dim=-1)
         output, _ = scaled_dot_product_attention(k, q, v, attn_mask, num_heads)
         output = self.norm(self.ffn(output))
-        # x = x.reshape(N, L, -1, self.d_out).mean(-2)
-        return output
+        x = x.reshape(N, L, -1, self.d_out).mean(-2)
+        return x + output
 
 
 class Smolgen(nn.Module):
