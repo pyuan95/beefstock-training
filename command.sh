@@ -12,7 +12,7 @@ python3 train.py \
     --features Transformer \
     --lr 0.00009 \
     --lambda 1.0 \
-    --gamma 0.998 \
+    --gamma 0.999 \
     --validation-size 8192 \
     --max_epochs 4000 \
     --smolgen-initial 64 \
