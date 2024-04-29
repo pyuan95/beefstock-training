@@ -207,7 +207,7 @@ class Smolgen(nn.Module):
         N = emb.shape[0]
         emb = self.hidden(emb).view(N, self.num_heads, self.hidden_dim)
         emb = batched_linear(self.weight, self.bias, emb)
-        return emb
+        return emb.view(N, -1, NUM_SQ, NUM_SQ)
 
 
 class Transformer(pl.LightningModule):

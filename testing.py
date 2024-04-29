@@ -29,10 +29,10 @@ from time import time
 
 W = torch.randn(16, 4096, 64) * 100
 B = torch.randn(16, 4096) * 100
-X = torch.randn(2048, 16, 64) * 100
+X = torch.randn(1024, 16, 64) * 100
 
 start = time()
-for _ in range(50):
+for _ in range(100):
     print(_)
     cur = batch_mul(W, B, X)
     # print((W @ X.unsqueeze(-1)).shape)
