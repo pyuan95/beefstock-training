@@ -347,6 +347,7 @@ def main():
             start_lambda=start_lambda,
             max_epoch=max_epoch,
             end_lambda=end_lambda,
+            smolgen_initial=args.smolgen_initial,
             smolgen_hidden=args.smolgen_hidden,
             eval_hidden=args.eval_hidden_depth,
             activation_function=args.activation_function,
@@ -355,32 +356,24 @@ def main():
             lr=args.lr,
         )
         if args.resume_from_model is not None:
-            base = "./training/runs/run_0/lightning_logs"
-            dirs = sorted(os.listdir(base), key=lambda x: os.path.getmtime(os.path.join(base, x)), reverse=True)
-            version = None
-            for d in dirs:
-                f = os.path.join(base, d, "checkpoints/last.ckpt")
-                print(f, os.path.exists(f))
-                if os.path.exists(f):
-                    version = f
-                    break
-            if version is not None:
-                print("loading from", version)
-                nnue = nnue.load_from_checkpoint(
-                    version,
-                    n_heads=args.n_heads,
-                    depth_list=args.depth_list,
-                    dff_list=args.dff_list,
-                    start_lambda=start_lambda,
-                    max_epoch=max_epoch,
-                    end_lambda=end_lambda,
-                    smolgen_hidden=args.smolgen_hidden,
-                    eval_hidden=args.eval_hidden_depth,
-                    activation_function=args.activation_function,
-                    policy_classification_weight=args.policy_classification_weight,
-                    gamma=args.gamma,
-                    lr=args.lr,
-                )
+            print("loading from", args.resume_from_model)
+            nnue = nnue.load_from_checkpoint(
+                args.resume_from_model,
+                n_heads=args.n_heads,
+                depth_list=args.depth_list,
+                dff_list=args.dff_list,
+                start_lambda=start_lambda,
+                max_epoch=max_epoch,
+                end_lambda=end_lambda,
+                smolgen_initial=args.smolgen_initial,
+                smolgen_hidden=args.smolgen_hidden,
+                eval_hidden=args.eval_hidden_depth,
+                activation_function=args.activation_function,
+                policy_classification_weight=args.policy_classification_weight,
+                gamma=args.gamma,
+                lr=args.lr,
+                strict=False
+            )
     else:
         if args.resume_from_model is None:
             nnue = M.NNUE(
@@ -448,7 +441,10 @@ def main():
         save_top_k=-1,
     )
     from pytorch_lightning.strategies.ddp import DDPStrategy
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger, strategy=DDPStrategy(find_unused_parameters=False))
+
+    trainer = pl.Trainer.from_argparse_args(
+        args, callbacks=[checkpoint_callback], logger=tb_logger, strategy=DDPStrategy(find_unused_parameters=False)
+    )
 
     main_device = (
         trainer.strategy.root_device if trainer.strategy.root_device.index is None else "cuda:" + str(trainer.strategy.root_device.index)
