@@ -176,6 +176,18 @@ class Encoder(nn.Module):
         return x + output
 
 
+@torch.jit.script
+def batched_linear(W, B, X):
+    # @ operator broadcasts and uses too much memory
+    # W shape: num_heads, D_out, D_in
+    # B shape: num_heads, D_out
+    # X shape: batch size, num_heads, D_in
+    # returns: W @ X + B of shape batch size, num_heads, D_out
+    x = torch.einsum("hij, bhj->bhi", W, X)
+    x += B
+    return x
+
+
 class Smolgen(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_heads, activation):
         super().__init__()
@@ -188,13 +200,14 @@ class Smolgen(nn.Module):
             nn.Linear(num_heads * hidden_dim, num_heads * hidden_dim),
             activation,
         )
-        self.out = nn.Conv1d(1, NUM_SQ * NUM_SQ, hidden_dim, stride=hidden_dim)
+        self.weight = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ, hidden_dim))
+        self.bias = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ))
 
     def forward(self, emb):
         N = emb.shape[0]
-        emb = self.hidden(emb).reshape(N, 1, -1)
-        emb = self.out(emb)  # (N, NUM_SQ * NUM_SQ, n_heads)
-        return emb.transpose(1, 2).reshape(N, self.num_heads, NUM_SQ, NUM_SQ)
+        emb = self.hidden(emb).view(N, self.num_heads, self.hidden_dim)
+        emb = batched_linear(self.weight, self.bias, emb)
+        return emb
 
 
 class Transformer(pl.LightningModule):
@@ -245,8 +258,8 @@ class Transformer(pl.LightningModule):
         self.initial_depth = initial_depth
         self.final_depth = final_depth
         self.piece_norm = RMSNorm(initial_depth)
-        self.smolgen = torch.compile(Smolgen(smolgen_hidden * NUM_SQ, smolgen_hidden, n_heads, activation))
-        self.smolgen_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, smolgen_hidden, NUM_SQ)
+        self.smolgen = torch.compile(Smolgen(smolgen_initial * NUM_SQ, smolgen_hidden, n_heads, activation))
+        self.smolgen_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, smolgen_initial, NUM_SQ)
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.encoders = nn.ModuleList(
             [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
