@@ -8,7 +8,7 @@ python3 train.py \
     --num-heads 32 \
     --threads 6 \
     --num-workers 1 \
-    --batch-size 512 \
+    --batch-size 384 \
     --random-fen-skipping 16 \
     --features Transformer \
     --lr 0.000125 \
