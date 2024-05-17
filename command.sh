@@ -11,7 +11,7 @@ python3 train.py \
     --batch-size 512 \
     --random-fen-skipping 16 \
     --features Transformer \
-    --lr 0.00009 \
+    --lr 0.000125 \
     --lambda 1.0 \
     --gamma 0.999 \
     --validation-size 8192 \
@@ -20,7 +20,7 @@ python3 train.py \
     --smolgen-hidden 64 \
     --eval-hidden-depth 128 \
     --activation-function relu \
-    --policy-classification-weight 0.000002 \
+    --policy-classification-weight 0.0000025 \
     --return-policy-index yes \
     --epoch-size 8192000 \
     --default_root_dir ./training/runs/transformer \
