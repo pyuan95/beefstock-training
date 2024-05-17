@@ -29,7 +29,7 @@ _num_threads_cache = dict()
 
 
 def _get_num_threads(outputs_per_square, num_squares):
-    optimal_num_threads = 512
+    optimal_num_threads = 256
     if (outputs_per_square, num_squares) not in _num_threads_cache:
         _num_threads_cache[(outputs_per_square, num_squares)] = _get_best_candidate(optimal_num_threads, outputs_per_square, num_squares)
 

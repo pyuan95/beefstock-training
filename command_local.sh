@@ -2,9 +2,10 @@ python3 train.py \
     "/media/patrick/New Volume/chess_project/data.binpack" \
     "/media/patrick/New Volume/chess_project/data.binpack" \
     --gpus "0," \
-    --depth-list 128,128,128 \
-    --dff-list 128,128 \
-    --num-heads 16 \
+    --depth-list 1024,512,512,512,128 \
+    --dff-list 768,512,512,256 \
+    --residual-connection-list yes,yes,yes,no \
+    --num-heads 32 \
     --threads 6 \
     --num-workers 4 \
     --batch-size 128 \
