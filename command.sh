@@ -2,9 +2,10 @@ python3 train.py \
     "/home/py95/data/2022.binpack" \
     "/home/py95/data/2023.binpack" \
     --gpus "0,1,2,3" \
-    --depth-list 512,256,128 \
-    --dff-list 256,256 \
-    --num-heads 16 \
+    --depth-list 1024,512,512,512,128 \
+    --dff-list 768,512,512,256 \
+    --residual-connection-list yes,yes,yes,no \
+    --num-heads 32 \
     --threads 6 \
     --num-workers 1 \
     --batch-size 1024 \

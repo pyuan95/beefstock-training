@@ -86,6 +86,10 @@ def list_of_ints(arg):
     return list(map(int, arg.split(",")))
 
 
+def list_of_bools(arg):
+    return list(map(str2bool, arg.split(",")))
+
+
 def flatten_once(lst):
     return sum(lst, [])
 
@@ -250,6 +254,12 @@ def main():
         help="list of dffs for the transformer model. length of this list must be exactly one less than depth_list.",
     )
     parser.add_argument(
+        "--residual-connection-list",
+        type=list_of_bools,
+        dest="residual_connection_list",
+        help="which transformer model layers residuals connections should be enabled. length must be exactly one less than depth_list.",
+    )
+    parser.add_argument(
         "--depth",
         type=int,
         dest="depth",
@@ -344,6 +354,7 @@ def main():
             n_heads=args.n_heads,
             depth_list=args.depth_list,
             dff_list=args.dff_list,
+            residual_connection_list=args.residual_connection_list,
             start_lambda=start_lambda,
             max_epoch=max_epoch,
             end_lambda=end_lambda,
@@ -372,7 +383,7 @@ def main():
                 policy_classification_weight=args.policy_classification_weight,
                 gamma=args.gamma,
                 lr=args.lr,
-                strict=False
+                strict=False,
             )
     else:
         if args.resume_from_model is None:

@@ -150,7 +150,7 @@ def scaled_dot_product_attention(keys, queries, values, attention_mask, num_head
 
 
 class Encoder(nn.Module):
-    def __init__(self, depth_in, dff, depth_out, activation, eps=1e-5):
+    def __init__(self, depth_in, dff, depth_out, activation, residual_conection=True, eps=1e-5):
         super().__init__()
         self.d_in = depth_in
         self.d_out = depth_out
@@ -161,6 +161,7 @@ class Encoder(nn.Module):
             nn.Linear(dff, depth_out, bias=True),
         )
         self.norm = RMSNorm(depth_out, eps=eps)
+        self.resid = residual_conection
 
     def forward(self, x, attn_mask, num_heads):
         """
@@ -172,8 +173,10 @@ class Encoder(nn.Module):
         k, q, v = self.kqv(x).split(self.d_in, dim=-1)
         output, _ = scaled_dot_product_attention(k, q, v, attn_mask, num_heads)
         output = self.norm(self.ffn(output))
-        x = x.reshape(N, L, -1, self.d_out).mean(-2)
-        return x + output
+        if self.resid:
+            x = x.reshape(N, L, -1, self.d_out).mean(-2)
+            return x + output
+        return output
 
 
 @torch.jit.script
@@ -200,14 +203,16 @@ class Smolgen(nn.Module):
             nn.Linear(num_heads * hidden_dim, num_heads * hidden_dim),
             activation,
         )
-        self.weight = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ, hidden_dim))
-        self.bias = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ))
+        # self.weight = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ, hidden_dim))
+        # self.bias = nn.Parameter(init_weight(num_heads, NUM_SQ * NUM_SQ))
+        self.out = nn.Linear(hidden_dim, NUM_SQ * NUM_SQ)
 
     def forward(self, emb):
         N = emb.shape[0]
         emb = self.hidden(emb).view(N, self.num_heads, self.hidden_dim)
-        emb = batched_linear(self.weight, self.bias, emb)
-        return emb.view(N, -1, NUM_SQ, NUM_SQ)
+        # emb = batched_linear(self.weight, self.bias, emb)
+        # return emb.view(N, -1, NUM_SQ, NUM_SQ)
+        return self.out(emb).view(N, self.num_heads, NUM_SQ, NUM_SQ)
 
 
 class Transformer(pl.LightningModule):
@@ -225,6 +230,7 @@ class Transformer(pl.LightningModule):
         self,
         depth_list=[64],
         dff_list=[64],
+        residual_connection_list=[True],
         eval_hidden=128,
         smolgen_initial=64,
         smolgen_hidden=64,
@@ -262,7 +268,10 @@ class Transformer(pl.LightningModule):
         self.smolgen_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, smolgen_initial, NUM_SQ)
         self.piece_encoder = FeatureTransformerSlice(FEATURES_PER_SQUARE, initial_depth, NUM_SQ)
         self.encoders = nn.ModuleList(
-            [Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation) for i in range(len(depth_list) - 1)]
+            [
+                Encoder(depth_list[i], dff_list[i], depth_list[i + 1], activation, residual_conection=residual_connection_list[i])
+                for i in range(len(depth_list) - 1)
+            ]
         )
         self.transformer_hidden = nn.Sequential(
             nn.Linear(final_depth * NUM_SQ * 2, eval_hidden),

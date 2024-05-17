@@ -109,6 +109,9 @@ struct Transformer
                             + static_cast<int>(orient(color, sq)) * FEATURES_PER_SQUARE;
             for (Square attacked_sq : attacks)
             {
+                if (pos.pieceAt(attacked_sq).type() == PieceType::None) {
+                    continue;
+                }
                 int attacked_piece_idx = get_index(pos.pieceAt(attacked_sq), color);
                 values[j] = 0.0f;
                 features[j++] = NUM_SQ * NUM_PT + attacked_piece_idx + static_cast<int>(orient(color, attacked_sq)) * NUM_PT // attacked piece
